@@ -1,0 +1,22 @@
+# Build definition read by the ash cluster CI (WorkflowTemplate build-app-image, app app-ci).
+# A push to the default branch that changes one of `paths` pushes
+# ghcr.io/hartmanfrost/fanficfare-calibre-plugin:{latest,<sha>}; a same-repo pull
+# request builds without pushing. The repo's default branch on GitHub must be fb2,
+# or app-ci skips every fb2 push. The unit tests run inside the build
+# (docker/calibre-plugin/Dockerfile), so a red test means no image.
+# `paths` lists only what goes into the image: every build gets a new digest, and
+# each new digest restarts the calibre pod (Image Updater follows :latest by digest),
+# so pushes that touch only docs, tests or scripts build nothing.
+images:
+  - image: ghcr.io/hartmanfrost/fanficfare-calibre-plugin
+    context: .
+    dockerfile: docker/calibre-plugin/Dockerfile
+    platforms: [linux/amd64]
+    paths:
+      - .ash-ci.yaml
+      - calibre-plugin/
+      - fanficfare/
+      - included_dependencies/
+      - makeplugin.py
+      - makezip.py
+      - docker/calibre-plugin/
