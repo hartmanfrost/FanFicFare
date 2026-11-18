@@ -1,0 +1,31 @@
+# Python packages for docker/calibre-plugin/Dockerfile (and scripts/sync-upstream.sh),
+# installed with pip --no-deps, so the list is complete:
+# - FanFicFare's own dependencies, pytest and lxml (the FB2 XSD checks) for the unit tests;
+# - Babel, to compile calibre-plugin/translations/*.po (build_plugin.py).
+# Exact pins: the set the test suite last passed with (Python 3.14).
+apsw==3.54.1.0
+babel==2.18.0
+beautifulsoup4==4.15.0
+brotli==1.2.1
+certifi==2026.10.23
+chardet==7.7.0
+charset-normalizer==3.5.2
+cloudscraper==1.2.71
+html2text==2025.4.15
+html5lib==1.1
+idna==3.20
+iniconfig==2.3.1
+lxml==6.1.3
+packaging==26.3
+pluggy==1.7.0
+pygments==2.21.0
+pyparsing==3.3.3
+pytest==9.2.0
+requests==2.34.2
+requests-file==3.0.1
+requests-toolbelt==1.0.0
+six==1.17.0
+soupsieve==4.1.1
+typing-extensions==4.16.0
+urllib3==2.8.0
+webencodings==0.6.1

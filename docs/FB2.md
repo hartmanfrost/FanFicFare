@@ -39,8 +39,11 @@ update support, to the FanFicFare CLI and calibre plugin.
   settings carry over.
 - CLI use: `calibre-debug --run-plugin "FanFicFare FB2" -- ...`
 - Build: `python makeplugin.py` (Python with zlib, e.g. a uv venv).
-  - The repository has only `.po` files and the build skips them, so a
+  - The repository has only `.po` files and makeplugin.py skips them, so a
     zip built this way has an English UI.
+  - `docker/calibre-plugin/build_plugin.py` (used by the image, see
+    `README-FB2.md`) compiles them to `.mo` first, as in upstream's
+    release zips, then runs makeplugin.py.
 
 ### How updates choose a file
 
@@ -94,4 +97,6 @@ update from:
 
 - No FB2 unnew, update log page (`include_logpage`) or footnotes.
 - Smarten punctuation and cover injection by polish stay EPUB only.
-- Translations aren't compiled by `makeplugin.py`.
+- Translations aren't compiled by `makeplugin.py` (only by
+  `docker/calibre-plugin/build_plugin.py`). The fork adds no new
+  translatable strings.

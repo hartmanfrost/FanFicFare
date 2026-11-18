@@ -1,0 +1,17 @@
+# Build-context exclusions for docker/calibre-plugin/Dockerfile (BuildKit reads
+# <Dockerfile>.dockerignore next to the Dockerfile). The CI context is a fresh
+# clone; this keeps a local checkout's venvs, caches, old zips and personal.ini
+# (credentials) out of it too.
+.git
+.venv
+venv
+**/__pycache__
+**/*.pyc
+**/*.mo
+*.egg-info
+.pytest_cache
+FanFicFare.zip
+**/personal.ini
+output
+build
+dist
