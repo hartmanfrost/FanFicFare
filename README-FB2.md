@@ -208,7 +208,7 @@ webhook. It needs:
 
 ```sh
 scripts/sync-upstream.sh            # rebase fb2 onto upstream main, test, print the pushes
-scripts/sync-upstream.sh --merge    # merge instead of rebase (no force-push)
+scripts/sync-upstream.sh --merge    # merge instead of rebase (never force-pushes)
 scripts/sync-upstream.sh --push     # also run the pushes
 ```
 
@@ -217,14 +217,20 @@ What it does:
 1. It refuses to run with uncommitted changes.
 2. It fetches `upstream` without tags and adds the remote if it is
    missing. Upstream's `v*` tags stay off the fork, because a pushed `v*`
-   tag starts a CI run.
+   tag starts a CI run. It also fetches the fork's `fb2`. If that has
+   commits the local `fb2` never had (pushed from another clone), it
+   stops and lists them; bring them in first. If the local `fb2` is only
+   behind, it is fast-forwarded.
 3. It fast-forwards the local `main` to upstream's.
 4. It saves `fb2` as `refs/backup/fb2/<time>`, then rebases `fb2` onto
    `upstream/main`.
 5. It runs the unit tests and the plugin build with the image's pinned
    packages, through `uv`.
-6. It prints `git push --force-with-lease=fb2 origin fb2` and
-   `git push origin main`.
+6. It prints the pushes: `git push origin main`, and for `fb2`, after a
+   rebase, `git push --force-with-lease=fb2:<the fb2 fetched in step 2>
+   origin fb2`, which git refuses if anything was pushed to `fb2` since.
+   Otherwise (`--merge`, or nothing rebased) it is a plain
+   `git push origin fb2`.
 
 On a conflict it stops. Resolve the conflict, finish the rebase
 (`git rebase --continue`), then run `scripts/sync-upstream.sh --continue`
