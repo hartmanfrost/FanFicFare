@@ -88,6 +88,13 @@ class FicBookNetAdapter(BaseSiteAdapter):
 
         return True
 
+    def setCount(self,key,value):
+        ## integer metadata from a prop or button text, left unset
+        ## when missing or zero.
+        digits = re.sub(r'\D','',value or '')
+        if digits and int(digits) > 0:
+            self.story.setMetadata(key,int(digits))
+
     ## Getting the chapter list and the meta data, plus 'is adult' checking.
     def extractChapterUrlsAndMetadata(self,get_cover=True):
         url=self.url
@@ -177,12 +184,19 @@ class FicBookNetAdapter(BaseSiteAdapter):
             self.setSeries(stripHTML(series_div.a), 1)
             self.story.setMetadata('seriesUrl','https://' + self.getSiteDomain() + series_div.a.get('href'))
 
-        i=0
-        fandoms = dlinfo.select_one('div:not([class])').find_all('a', href=re.compile(r'/fanfiction/\w+'))
+        ## "Фэндом:" lists the fandoms as /fanfiction/ links.  Works
+        ## filed under a whole fandom universe (many of the newer
+        ## ones) have a "Вселенная:" /fandom_universe/ link instead
+        ## and no "Фэндом:" line at all.
+        fandoms = []
+        fandom_label = dlinfo.find('strong', string='Фэндом:')
+        if fandom_label:
+            fandoms = fandom_label.find_next('div').find_all('a', href=re.compile(r'/fanfiction/\w+'))
+        if not fandoms:
+            fandoms = dlinfo.find_all('a', href=re.compile(r'/fandom_universe/'))
         for fandom in fandoms:
-            self.story.addToList('category',fandom.string)
-            i=i+1
-        if i > 1:
+            self.story.addToList('category',stripHTML(fandom))
+        if len(fandoms) > 1:
             self.story.addToList('genre', u'Кроссовер')
 
         tags = soup.find('div',{'class':'tags'})
@@ -198,6 +212,8 @@ class FicBookNetAdapter(BaseSiteAdapter):
 
         if dlinfo.find('div', {'class':'ds-label-status-finished'}):
             self.story.setMetadata('status', 'Completed')
+        elif dlinfo.find('div', {'class':'ds-label-status-frozen'}):
+            self.story.setMetadata('status', 'Frozen')
         else:
             self.story.setMetadata('status', 'In-Progress')
 
@@ -226,20 +242,20 @@ class FicBookNetAdapter(BaseSiteAdapter):
             #self.story.setMetadata('description', summary.text)
 
         stats = soup.find('div', {'class':'hat-actions-container'})
-        targetdata = stats.find_all('span', {'class' : 'main-info'})
-        for data in targetdata:
-            svg_class = data.find('svg')['class'][1] if data.find('svg') else None
-            value = int(stripHTML(data)) if stripHTML(data).isdigit() else 0
+        ## The counts aren't plain text in the page anymore, they're
+        ## props of the custom Vue tags (likes, collections) or the
+        ## text of the comments button (reviews).
+        likes = dlinfo.find(['fanfic-like-label','fanfic-like-button'])
+        if likes:
+            self.setCount('likes', likes.get(':like-count'))
 
-            if svg_class == 'ic_thumbs-up' and value > 0:
-                self.story.setMetadata('likes', value)
-                #logger.debug("likes: (%s)"%self.story.getMetadata('likes'))
-            elif svg_class == 'ic_bubble-dark' and value > 0:
-                self.story.setMetadata('reviews', value)
-                #logger.debug("reviews: (%s)"%self.story.getMetadata('reviews'))
-            elif svg_class == 'ic_bookmark' and value > 0:
-                self.story.setMetadata('numCollections', value)
-                # logger.debug("numCollections: (%s)"%self.story.getMetadata('numCollections'))
+        comments = stats.find('a', href=re.compile(r'/comments#comments-list$'))
+        if comments:
+            self.setCount('reviews', stripHTML(comments))
+
+        collections = stats.find('fanfic-collections-link')
+        if collections:
+            self.setCount('numCollections', collections.get(':initial-count'))
 
         # Grab the amount of pages and words
         targetpages = soup.find('strong',string='Размер:').find_next('div')
@@ -260,9 +276,13 @@ class FicBookNetAdapter(BaseSiteAdapter):
 
         # Grab FBN Category - Джен(Gen) == straight, Слэш(gay), etc
         # 'direction' == 'Orientation'
-        class_tag = soup.select_one('section.fanfic-badges div.direction')
+        class_tag = dlinfo.select_one('section.fanfic-badges div.direction')
         if class_tag:
-            self.story.setMetadata('classification',class_tag)
+            ## plain text, not the markup.  Falls back to the start
+            ## of the title attr ("Гет — романтические...") if there's
+            ## no label text.
+            direction = stripHTML(class_tag) or class_tag.get('title','').split(u' — ')[0]
+            self.story.setMetadata('classification',direction)
             #logger.debug("classification: (%s)"%self.story.getMetadata('classification'))
 
         # Find dedication.
