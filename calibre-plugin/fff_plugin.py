@@ -59,8 +59,14 @@ from calibre_plugins.fanficfare_plugin.common_utils import (
 from fanficfare import adapters, exceptions
 
 from fanficfare.epubutils import (
-    get_dcsource, get_dcsource_chaptercount, get_story_url_from_epub_html,
+    get_story_url_from_epub_html,
     get_story_url_from_zip_html, unnew_chapters_epub, get_cover_img)
+
+## read EPUB or FB2, by content.
+from fanficfare.updatedata import (
+    get_dcsource, get_dcsource_chaptercount,
+    UPDATE_FORMATS, choose_update_source)
+from fanficfare.fb2utils import get_story_url_from_fb2_html
 
 from fanficfare.geturls import GetURLs
 
@@ -103,6 +109,7 @@ from calibre_plugins.fanficfare_plugin.dialogs import (
 # but if I'm doing it anyway...
 formmapping = {
     'epub':'EPUB',
+    'fb2':'FB2',
     'mobi':'MOBI',
     'html':'ZIP',
     'txt':'TXT'
@@ -571,7 +578,7 @@ class FanFicFarePlugin(InterfaceAction):
             extraoptions['collision'] = CALIBREONLY
             return
 
-        if collision in (UPDATE,UPDATEALWAYS) and prefs['fileform'] != 'epub':
+        if collision in (UPDATE,UPDATEALWAYS) and prefs['fileform'] not in UPDATE_FORMATS:
             s=_('Cannot update non-epub format.')
             info_dialog(self.gui, s, s, show=True, show_copy_button=False)
             extraoptions['collision'] = OVERWRITE
@@ -1427,7 +1434,7 @@ class FanFicFarePlugin(InterfaceAction):
             raise exceptions.NotGoingToDownload(_("Skipping duplicate story."),"list_remove.png")
 
         # Dialogs should prevent this case now.
-        if collision in (UPDATE,UPDATEALWAYS) and fileform != 'epub':
+        if collision in (UPDATE,UPDATEALWAYS) and fileform not in UPDATE_FORMATS:
             raise exceptions.NotGoingToDownload(_("Cannot update non-epub format."))
 
         if not book['good']:
@@ -1734,21 +1741,26 @@ class FanFicFarePlugin(InterfaceAction):
                     # don't need temp file created below.
                     return
 
+                ## Existing EPUB or FB2 to update from: the output
+                ## format's, else the other one (a conversion).  Also
+                ## for overwrite, for logpage preserve.
+                update_fmt, chaptercount = self.get_update_source(db, book_id, fileform, collision)
+
                 ## newer/chaptercount checks are the same for both:
                 # Update epub, but only if more chapters.
                 if not bgmeta and collision in (UPDATE,UPDATEALWAYS):
                     # 'book' can exist without epub.  If there's no existing epub,
                     # let it go and it will download it.
-                    if db.has_format(book_id,fileform,index_is_id=True):
-                        (epuburl,chaptercount) = \
-                            get_dcsource_chaptercount(BytesIO(db.format(book_id,'EPUB',
-                                                                         index_is_id=True)))
+                    if update_fmt:
                         # returns int adjusted for start-end range.
                         urlchaptercount = story.getChapterCount()
                         needs_edit_check = adapter.recheck_recent_chapters()
                         preserve_deleted = adapter.preserve_deleted_chapters()
+                        ## writing the update in another format than
+                        ## the existing file's always writes.
+                        converting = update_fmt != fileform
                         update_decision = decide_update(chaptercount, urlchaptercount,
-                                                       updatealways=collision == UPDATEALWAYS,
+                                                       updatealways=collision == UPDATEALWAYS or converting,
                                                        needs_edit_check=needs_edit_check,
                                                        preserve_deleted=preserve_deleted,
                                                        force_update_epub_always=collision == UPDATEALWAYS and adapter.getConfig('force_update_epub_always'))
@@ -1779,15 +1791,15 @@ class FanFicFarePlugin(InterfaceAction):
 
                 # For update, provide a tmp file copy of the existing epub so
                 # it can't change underneath us.  Now also overwrite for logpage preserve.
-                if collision in (UPDATE,UPDATEALWAYS,OVERWRITE,OVERWRITEALWAYS) and \
-                        fileform == 'epub' and \
-                        db.has_format(book['calibre_id'],'EPUB',index_is_id=True):
+                # 'epub_for_update' can be an FB2, see 'update_format'.
+                if update_fmt:
                     tmp = PersistentTemporaryFile(prefix='old-%s-'%book['calibre_id'],
-                                                  suffix='.epub',
+                                                  suffix='.'+update_fmt,
                                                   dir=options['tdir'])
-                    db.copy_format_to(book_id,fileform,tmp,index_is_id=True)
-                    logger.debug("existing epub tmp:"+tmp.name)
+                    db.copy_format_to(book_id,formmapping[update_fmt],tmp,index_is_id=True)
+                    logger.debug("existing %s tmp:%s"%(update_fmt,tmp.name))
                     book['epub_for_update'] = tmp.name
+                    book['update_format'] = update_fmt
 
             if book_id != None and prefs['injectseries']:
                 mi = db.get_metadata(book_id,index_is_id=True)
@@ -1858,6 +1870,30 @@ class FanFicFarePlugin(InterfaceAction):
             book['outfile'] = tmp.name
 
         return
+
+    def get_update_source(self, db, book_id, fileform, collision):
+        '''
+        (format, chapter count) of the book's existing EPUB or FB2 to
+        update when writing fileform, or (None, None) to download it
+        all.  See fanficfare.updatedata.choose_update_source.
+        '''
+        if collision not in (UPDATE,UPDATEALWAYS,OVERWRITE,OVERWRITEALWAYS):
+            return (None, None)
+        def has_format(fmt):
+            return db.has_format(book_id,formmapping[fmt],index_is_id=True)
+        def get_chaptercount(fmt):
+            return get_dcsource_chaptercount(BytesIO(db.format(book_id,formmapping[fmt],
+                                                               index_is_id=True)))[1]
+        try:
+            (fmt, chaptercount) = choose_update_source(fileform, has_format, get_chaptercount)
+        except Exception as e:
+            if collision in (UPDATE,UPDATEALWAYS):
+                raise
+            ## overwrite only reads the old file for its log page.
+            logger.warning("Existing book %s not readable, overwriting without it: %s"%(book_id,e))
+            return (None, None)
+        logger.debug("update source for %s %s: %s (%s chapters)"%(fileform,book_id,fmt,chaptercount))
+        return (fmt, chaptercount)
 
     def start_download_job(self,book_list,
                             options={'fileform':'epub',
@@ -2785,14 +2821,16 @@ class FanFicFarePlugin(InterfaceAction):
 
         logger.info("cover_image:%s"%book['all_metadata']['cover_image'])
         # updating calibre cover from book.
-        if options['fileform'] == 'epub' and \
+        if options['fileform'] in ('epub','fb2') and \
             ( book['added'] or not prefs['covernewonly'] ) and (
             (prefs['updatecover'] and not prefs['updatecalcover']) ## backward compat
             or prefs['updatecalcover'] == SAVE_YES ## yes, always
             or (prefs['updatecalcover'] == SAVE_YES_IF_IMG ## yes, if image.
                 and book['all_metadata']['cover_image'] )): # in ('specific','first','default','old')
-            existingepub = db.format(book_id,'EPUB',index_is_id=True, as_file=True)
-            epubmi = calibre_get_metadata(existingepub,'EPUB')
+            ## cover from the EPUB or FB2 just written.
+            fmt = formmapping[options['fileform']]
+            existingepub = db.format(book_id,fmt,index_is_id=True, as_file=True)
+            epubmi = calibre_get_metadata(existingepub,fmt)
             if epubmi.cover_data[1] is not None:
                 try:
                     db.set_cover(book_id, epubmi.cover_data[1])
@@ -3117,6 +3155,21 @@ class FanFicFarePlugin(InterfaceAction):
                 if link:
                     # print("url from get_dcsource:%s"%link)
                     return link
+            ## FB2 document-info src-url.  calibre's FB2 metadata
+            ## reader doesn't give it as an identifier.
+            existingfb2 = None
+            if path == None and db.has_format(book_id,'FB2',index_is_id=True):
+                existingfb2 = db.format(book_id,'FB2',index_is_id=True, as_file=True)
+            elif path and path.lower().endswith(('.fb2','.fb2.zip')):
+                existingfb2 = path
+            if existingfb2:
+                try:
+                    link = get_dcsource(existingfb2)
+                except Exception as e:
+                    logger.info("No story URL from FB2: %s"%e)
+                    existingfb2 = None
+                if link:
+                    return link
 
             ## now also can search html and txt formats.
             if prefs['lookforurlinhtml']:
@@ -3124,6 +3177,11 @@ class FanFicFarePlugin(InterfaceAction):
                 if existingepub:
                     link = get_story_url_from_epub_html(existingepub,self.is_good_downloader_url)
                     # print("url from get_story_url_from_epub_html:%s"%link)
+                    if link:
+                        return link
+                if existingfb2:
+                    ## eg calibre's FB2 conversion of an FFF EPUB.
+                    link = get_story_url_from_fb2_html(existingfb2,self.is_good_downloader_url)
                     if link:
                         return link
                 if db.has_format(book_id,'ZIP',index_is_id=True):

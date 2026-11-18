@@ -70,6 +70,7 @@ from calibre_plugins.fanficfare_plugin.dialogs import (
 from calibre_plugins.fanficfare_plugin.fff_util import make_safe_ini
 
 from fanficfare.adapters import getSiteSections, get_section_url
+from fanficfare.updatedata import UPDATE_FORMATS
 
 from calibre_plugins.fanficfare_plugin.common_utils import (
     KeyboardConfigDialog, PrefsViewerDialog, busy_cursor )
@@ -459,6 +460,7 @@ class BasicTab(QWidget):
         horz.addWidget(label)
         self.fileform = QComboBox(self)
         self.fileform.addItem('epub')
+        self.fileform.addItem('fb2')
         self.fileform.addItem('mobi')
         self.fileform.addItem('html')
         self.fileform.addItem('txt')
@@ -722,7 +724,7 @@ class BasicTab(QWidget):
         prev=self.collision.currentText()
         self.collision.clear()
         for o in collision_order:
-            if self.fileform.currentText() == 'epub' or o not in [UPDATE,UPDATEALWAYS]:
+            if self.fileform.currentText() in UPDATE_FORMATS or o not in [UPDATE,UPDATEALWAYS]:
                 self.collision.addItem(o)
         i = self.collision.findText(prev)
         if i > -1:

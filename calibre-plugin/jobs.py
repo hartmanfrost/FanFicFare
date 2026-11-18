@@ -135,7 +135,8 @@ def do_download_for_worker(book,options,merge,notification=lambda x,y:x):
                 UPDATEALWAYS, ADDNEW, SKIP, CALIBREONLY, CALIBREONLYSAVECOL)
         from calibre_plugins.fanficfare_plugin.wordcount import get_word_count
         from fanficfare import adapters, writers
-        from fanficfare.epubutils import get_update_data
+        ## 'epub_for_update' is an EPUB or an FB2.
+        from fanficfare.updatedata import get_update_data, detect_format
         from fanficfare.exceptions import NotGoingToDownload
         from fanficfare.updategate import decide_update
 
@@ -157,9 +158,9 @@ def do_download_for_worker(book,options,merge,notification=lambda x,y:x):
                                            options['personal.ini'],
                                            ini_snippet=options.get('ini_snippet',None))
 
-            # images only for epub, html, even if the user mistakenly
+            # images only for epub, html, fb2 even if the user mistakenly
             # turned it on else where.
-            if options['fileform'] not in ("epub","html"):
+            if options['fileform'] not in ("epub","html","fb2"):
                 configuration.set("overrides","include_images","false")
 
             adapter = adapters.getAdapter(configuration,book['url'])
@@ -270,6 +271,12 @@ def do_download_for_worker(book,options,merge,notification=lambda x,y:x):
                 #urlchaptercount = int(story.getMetadata('numChapters').replace(',',''))
                 # returns int adjusted for start-end range.
                 urlchaptercount = story.getChapterCount()
+                ## Writing another format than the existing file's
+                ## (EPUB to FB2 or back) always writes, even without
+                ## new chapters.
+                update_format = book.get('update_format') or \
+                    detect_format(book['epub_for_update']) or 'epub'
+                converting = update_format != options['fileform']
                 (url,
                  chaptercount,
                  adapter.oldchapters,
@@ -286,7 +293,7 @@ def do_download_for_worker(book,options,merge,notification=lambda x,y:x):
                     preserve_deleted = adapter.preserve_deleted_chapters()
 
                     update_decision = decide_update(chaptercount, urlchaptercount,
-                                updatealways=book['collision'] == UPDATEALWAYS,
+                                updatealways=book['collision'] == UPDATEALWAYS or converting,
                                 needs_edit_check=needs_edit_check,
                                 preserve_deleted=preserve_deleted,
                                 force_update_epub_always=book['collision'] == UPDATEALWAYS and adapter.getConfig('force_update_epub_always'))
@@ -313,7 +320,8 @@ def do_download_for_worker(book,options,merge,notification=lambda x,y:x):
                         and adapter.getConfig("do_update_hook"):
                     chaptercount = adapter.hookForUpdates(chaptercount)
 
-                logger.info("Do update - epub(%d) vs url(%d)" % (chaptercount, urlchaptercount))
+                logger.info("Do update - %s(%d) vs url(%d)%s" % (update_format, chaptercount, urlchaptercount,
+                                                                  " to %s"%options['fileform'] if converting else ""))
 
                 inject_cal_cols(book,story,configuration)
                 # Fetch the story now (previously only inside writeStory) so we
@@ -321,7 +329,7 @@ def do_download_for_worker(book,options,merge,notification=lambda x,y:x):
                 # write & library update.  writeStory guards against a second
                 # fetch once the story is loaded.
                 adapter.getStory(notification)
-                if book['collision'] == UPDATE and \
+                if book['collision'] == UPDATE and not converting and \
                         adapter.story.chapter_updated_count == 0 and \
                         adapter.story.chapter_added_count == 0 and \
                         adapter.story.chapter_error_count == 0 and \

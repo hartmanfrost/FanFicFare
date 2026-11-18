@@ -134,7 +134,9 @@ default_prefs['autoconvert'] = False
 default_prefs['urlsfromclip'] = True
 default_prefs['button_instantpopup'] = False
 default_prefs['updatedefault'] = True
-default_prefs['fileform'] = 'epub'
+## FanFicFare FB2 fork: FB2 by default.  Only for libraries that
+## haven't saved FanFicFare settings yet.
+default_prefs['fileform'] = 'fb2'
 default_prefs['collision'] = SAVE_UPDATE
 default_prefs['deleteotherforms'] = False
 default_prefs['adddialogstaysontop'] = False

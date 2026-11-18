@@ -51,6 +51,7 @@ from calibre_plugins.fanficfare_plugin.common_utils import (
     ImageTitleLayout, get_icon)
 
 from fanficfare.geturls import GetURLs
+from fanficfare.updatedata import UPDATE_FORMATS
 from fanficfare.adapters import getNormalStoryURL
 
 from fanficfare.configurable import (
@@ -384,6 +385,7 @@ class AddNewDialog(HotKeyedSizePersistedDialog, INISnippetDialog):
 
         self.fileform = QComboBox(self)
         self.fileform.addItem('epub')
+        self.fileform.addItem('fb2')
         self.fileform.addItem('mobi')
         self.fileform.addItem('html')
         self.fileform.addItem('txt')
@@ -579,7 +581,7 @@ class AddNewDialog(HotKeyedSizePersistedDialog, INISnippetDialog):
         else:
             order = list(collision_order)
             ## Remove options that aren't valid.
-            if self.fileform.currentText() != 'epub':
+            if self.fileform.currentText() not in UPDATE_FORMATS:
                 order.remove(UPDATE)
                 order.remove(UPDATEALWAYS)
             if self.prefs['savemetacol'] == '':
@@ -1110,6 +1112,7 @@ class UpdateExistingDialog(SizePersistedDialog, INISnippetDialog):
         horz.addWidget(label)
         self.fileform = QComboBox(self)
         self.fileform.addItem('epub')
+        self.fileform.addItem('fb2')
         self.fileform.addItem('mobi')
         self.fileform.addItem('html')
         self.fileform.addItem('txt')
@@ -1175,7 +1178,7 @@ class UpdateExistingDialog(SizePersistedDialog, INISnippetDialog):
         order = list(collision_order)
         order.remove(ADDNEW)
         order.remove(SKIP)
-        if self.fileform.currentText() != 'epub':
+        if self.fileform.currentText() not in UPDATE_FORMATS:
             order.remove(UPDATE)
             order.remove(UPDATEALWAYS)
         if self.prefs['savemetacol'] == '':
