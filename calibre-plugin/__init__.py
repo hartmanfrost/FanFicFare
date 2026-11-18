@@ -122,8 +122,20 @@ class FanFicFareBase(InterfaceActionBase):
         from calibre.customize.ui import initialized_plugins
         names = set(p.name for p in initialized_plugins())
         if 'FanFicFare' in names and 'FanFicFare FB2' in names:
-            raise Exception("The 'FanFicFare FB2' and 'FanFicFare' plugins can't be installed together."
-                            "  Remove one of them in Preferences > Plugins and restart calibre.")
+            msg = ("The 'FanFicFare FB2' and 'FanFicFare' plugins can't be installed together."
+                   "  Remove one of them in Preferences > Plugins and restart calibre.")
+            ## calibre only prints an exception from here to stderr
+            ## and leaves the plugin out, so also say it in the GUI,
+            ## once it's up.
+            if gui is not None:
+                try:
+                    from qt.core import QTimer
+                    from calibre.gui2 import error_dialog
+                    QTimer.singleShot(0, lambda: error_dialog(
+                            gui, 'FanFicFare FB2', msg, show=True))
+                except Exception:
+                    pass
+            raise Exception(msg)
 
         # so the sys.path was modified while loading the plug impl.
         with self:

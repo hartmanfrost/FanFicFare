@@ -31,12 +31,16 @@ update support, to the FanFicFare CLI and calibre plugin.
   never offers upstream FanFicFare as an "update" of the fork.
 - **Uninstall upstream FanFicFare first.** Both use the import name
   `fanficfare_plugin` and bundle their own `fanficfare`. With both
-  installed, calibre 9.15 loads a mix of the two and neither works. The
-  fork then fails with a message saying so, if calibre loaded the
-  fork's copy of the code.
+  installed, calibre 9.15 loads a mix of the two and neither works:
+  calibre leaves both actions out, so there is no FanFicFare button,
+  and only prints why to stderr. The fork also shows an error dialog
+  saying they can't be installed together when the GUI starts (if
+  calibre loaded the fork's copy of the code).
 - The library settings namespace and the action name `FanFicFare`
-  (toolbar, shortcuts, Action Chains) are unchanged, so existing
-  settings carry over.
+  (toolbar, Action Chains) are unchanged, so existing settings carry
+  over. Keyboard shortcuts too: calibre keys them by the base plugin's
+  name, so `FanFicFarePlugin.unique_name` keeps upstream's
+  `Interface Action: FanFicFare (FanFicFare)`.
 - CLI use: `calibre-debug --run-plugin "FanFicFare FB2" -- ...`
 - Build: `python makeplugin.py` (Python with zlib, e.g. a uv venv).
   - The repository has only `.po` files and makeplugin.py skips them, so a
