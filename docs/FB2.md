@@ -17,9 +17,18 @@ update support, to the FanFicFare CLI and calibre plugin.
 - CLI:
   - `-u`/`-U` take FB2 files.
   - `-u book.epub -f fb2` converts with no chapter refetch, and
-    `-u book.fb2 -f epub` converts back.
+    `-u book.fb2 -f epub` converts back. If `book.fb2` is already a
+    FanFicFare FB2, it is updated instead.
+  - `-u URL` picks the file to update from as the plugin does
+    (`choose_update_source`).
   - An FB2 made by another program (no FanFicFare data) gets a full
-    download.
+    download, keeping its cover.
+- A conversion keeps chapters the site has removed, as
+  `update_preserve_deleted_chapters:true` does
+  (`updatedata.preserve_deleted_chapters_on_conversion`; CLI and plugin).
+- `update_check_recent_chapters` compares a chapter read back from an FB2
+  with the site's as FB2 text (`fb2utils.comparable_text`), so unchanged
+  chapters don't count as edited.
 
 ## calibre plugin
 
@@ -58,7 +67,7 @@ update from:
 | Output format | Book has | Update reads | Result |
 |---|---|---|---|
 | fb2 | FB2 from FanFicFare | the FB2 | FB2 updated; only new chapters are fetched |
-| fb2 | EPUB only (or FB2 not from FanFicFare + EPUB) | the EPUB | conversion: FB2 written and added to the same book, no chapter refetch, **always written**, even without new chapters; EPUB kept |
+| fb2 | EPUB only (or FB2 not from FanFicFare + EPUB) | the EPUB | conversion: FB2 written and added to the same book, no chapter refetch, **always written**, even without new chapters, chapters the site removed kept; EPUB kept |
 | fb2 | only an FB2 not from FanFicFare (e.g. calibre's conversion) | nothing | full download, the FB2 is replaced |
 | epub | EPUB | the EPUB | as upstream |
 | epub | FanFicFare FB2 only (or EPUB without chapters + FB2) | the FB2 | conversion to EPUB, always written |

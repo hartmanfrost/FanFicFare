@@ -91,21 +91,30 @@ uv venv && uv pip install -e .          # or: pip install git+https://github.com
 |---|---|
 | `fanficfare -f fb2 URL` | new download as FB2 (`output_filename`, by default `<title>-<site>_<id>.fb2`) |
 | `fanficfare -u story.fb2` | update: fetches only chapters that are new on the site |
-| `fanficfare -u URL -f fb2` | update the FB2 that `output_filename` names for URL; if only an EPUB of that name exists, convert it |
+| `fanficfare -u URL -f fb2` | update the FB2 that `output_filename` names for URL; if it has no FanFicFare data (or doesn't exist) and an EPUB of that name does, convert the EPUB; an FB2 without FanFicFare data and no EPUB: full download, replacing it |
 | `fanficfare -U story.fb2` | rewrite even without new chapters, still without refetching old ones; as upstream, a file newer than the story's last update is skipped unless `always_overwrite:true` |
-| `fanficfare -u story.epub -f fb2` | convert: writes `story.fb2` from the EPUB's chapters plus any new ones; `story.epub` is not changed; always writes |
+| `fanficfare -u story.epub -f fb2` | convert: writes `story.fb2` from the EPUB's chapters plus any new ones; `story.epub` is not changed; always writes. If `story.fb2` is already a FanFicFare FB2 (converted before), it is updated instead, as by `-u story.fb2` |
 | `fanficfare -u story.fb2 -f epub` | convert back to EPUB |
-| `fanficfare -u other.fb2` | an FB2 without FanFicFare data (from another program): full download, replaces the file |
+| `fanficfare -u other.fb2` | an FB2 without FanFicFare data (from another program): full download, replaces the file, keeps its cover |
 | `fanficfare -o zip_output=true -f fb2 URL` | `.fb2.zip`; `-u story.fb2.zip` updates it in place |
 
 Without `-f`, `-u`/`-U` keep the format of the given file. A conversion
 still fetches the story's page for the metadata and chapter list, but no
-chapters it already has.
+chapters it already has. It also keeps the chapters the site has removed
+since, as `update_preserve_deleted_chapters:true` does (not with a
+chapter range), instead of refusing because the file has more chapters
+than the site. Later updates of such a story compare chapter counts as
+usual, so turn `update_preserve_deleted_chapters` on for it.
 Converting a folder:
 
 ```sh
 for f in library/*.epub; do fanficfare --non-interactive -u "$f" -f fb2; done
 ```
+
+Running the loop again (after an interruption, say) updates the FB2s it
+already wrote instead of converting them again. To convert an EPUB again,
+delete its FB2 first; `--force` is not the way, it downloads every
+chapter again.
 
 Settings go in `personal.ini` under `[fb2]` or `[<site>:fb2]`, for
 example `[ficbook.net:fb2]`. The documented defaults are in the `[fb2]`
