@@ -288,6 +288,45 @@ def test_html_to_fb2_br_before_block():
     assert HtmlToFb2().convert(u'<p>A<br/><br/><br/></p>') == [u'<p>A</p>']
 
 
+def test_html_to_fb2_images_in_poem():
+    "An image in a poem goes after it (a <v> can't hold a block image)."
+    imgmap = {'images/a.png': 'a.png'}
+    for cls in ('poem', 'verse'):
+        html = (u'<div class="%s"><p>Строка один<br/><img src="images/a.png" alt="рисунок"/>'
+                u'<br/>Строка два</p><p><img src="images/a.png"/></p></div>' % cls)
+        assert HtmlToFb2(imgmap=imgmap).convert(html) == [
+            u'<poem><stanza><v>Строка один</v><v>Строка два</v></stanza></poem>',
+            u'<image l:href="#a.png" alt="рисунок"/>', u'<image l:href="#a.png"/>']
+    ## annotations have no images: alt text, as before
+    assert HtmlToFb2(imgmap=imgmap, allow_images=False).convert(
+        u'<div class="poem"><p>x<br/><img src="images/a.png" alt="ALT"/></p></div>') == \
+        [u'<poem><stanza><v>x</v><v>[ALT]</v></stanza></poem>']
+
+
+def test_writer_image_in_poem_is_referenced(schemas, tmp_path):
+    img = tmp_path / 'pic.png'
+    img.write_bytes(PNG)
+    personal = PERSONAL.replace('include_images:false', 'include_images:true') + \
+        'no_image_processing:true\n'
+    content = {1: u'<p>Before.</p><div class="verse"><p>Строка один<br/>'
+                  u'<img src="%s" alt="рисунок"/><br/>Строка два</p></div>' % img.as_uri()}
+    adapter = make_adapter(make_config(personal=personal), content)
+    data = write_fb2(adapter)
+    ok, errors = schemas(data)
+    assert ok, errors
+    text = data.decode('utf-8')
+    binaries = set(re.findall(r'<binary id="([^"]+)"', text))
+    referenced = set(re.findall(r'<image l:href="#([^"]+)"', text))
+    assert binaries and binaries == referenced
+    ## and reading it back, then writing again, gives the same section
+    adapter2 = make_adapter(make_config(personal=personal), content)
+    (adapter2.oldchapters, adapter2.oldimgs, adapter2.oldcover,
+     adapter2.calibrebookmark, adapter2.logfile, adapter2.oldchaptersmap,
+     adapter2.oldchaptersdata) = get_update_data(io.BytesIO(data))[2:9]
+    assert sections(write_fb2(adapter2)) == sections(data)
+    assert adapter2.fetched == []
+
+
 def test_html_to_fb2_hr_text_and_images():
     assert HtmlToFb2(hr_text='').convert(u'<p>a</p><hr/><p>b</p>') == \
         [u'<p>a</p>', u'<empty-line/>', u'<p>b</p>']

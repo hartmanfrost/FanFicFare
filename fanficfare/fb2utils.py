@@ -402,7 +402,7 @@ class HtmlToFb2(object):
         self.blocks.extend(imgs)
 
     def _lines(self, nodes, pw):
-        sub = self._sub(allow_images=False, line_mode=True)
+        sub = self._sub(line_mode=True)
         for n in nodes:
             sub.handle(n, pw)
         sub._end_block()
@@ -414,6 +414,14 @@ class HtmlToFb2(object):
         parts = []          # (kind, xml) kind: stanza/subtitle
         authors = []
         pending = []        # loose inline nodes, an implicit stanza
+        ## images in the poem: a <v> can't hold a block image, so
+        ## they go after the poem, as _container does for <cite>.
+        images = []
+
+        def lines_of(nodes):
+            blocks = self._lines(nodes, pw)
+            images.extend(b for b in blocks if b.startswith(u'<image'))
+            return blocks
 
         def add_stanzas(blocks):
             stanza = []
@@ -427,7 +435,7 @@ class HtmlToFb2(object):
 
         def flush_pending():
             if pending:
-                add_stanzas(self._lines(pending, pw))
+                add_stanzas(lines_of(pending))
                 del pending[:]
 
         for c in list(child.children):
@@ -444,7 +452,7 @@ class HtmlToFb2(object):
                 pending.append(c)
                 continue
             flush_pending()
-            blocks = self._lines([c], pw)
+            blocks = lines_of([c])
             lines = [b[3:-4] for b in blocks if b.startswith(u'<p>')]
             if not lines:
                 continue
@@ -459,13 +467,15 @@ class HtmlToFb2(object):
         flush_pending()
 
         if not any(k == 'stanza' for k, _ in parts):
-            ## nothing poem-like found, keep the text as paragraphs.
+            ## nothing poem-like found, keep the text as paragraphs
+            ## (with its images, so the list above isn't used).
             self.walk(child, pw)
             self._end_block()
             return
         self.blocks.append(u'<poem>%s%s%s</poem>' % (
                 (u'<title>%s</title>' % u''.join(title)) if title else u'',
                 u''.join(x for _, x in parts), u''.join(authors)))
+        self.blocks.extend(images)
 
     def convert(self, htmltext):
         with warnings.catch_warnings():
