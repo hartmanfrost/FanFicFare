@@ -96,3 +96,19 @@ def test_choose_update_source_real_files(tmp_path):
     assert run('fb2', {'fb2': foreign, 'epub': files['epub']}) == ('epub', 3)
     assert run('fb2', {'fb2': foreign}) == (None, None)
     assert run('epub', {'fb2': b'<FictionBook><not xml'}) == (None, None)
+
+
+def test_preserve_deleted_chapters_on_conversion():
+    from fanficfare.updatedata import preserve_deleted_chapters_on_conversion
+    from tests.test_fb2 import make_adapter, make_config
+    adapter = make_adapter(make_config(), {1: u'x'})
+    ## looked up (and cached) before the conversion is known
+    assert not adapter.preserve_deleted_chapters()
+    assert preserve_deleted_chapters_on_conversion(adapter) is True
+    assert adapter.preserve_deleted_chapters()
+
+    ## with a chapter range: off, and no ConflictingOptions
+    adapter = make_adapter(make_config(), {1: u'x', 2: u'y'})
+    adapter.setChaptersRange('1', '1')
+    assert preserve_deleted_chapters_on_conversion(adapter) is False
+    assert not adapter.preserve_deleted_chapters()

@@ -108,6 +108,27 @@ def update_source_order(fileform):
         return []
     return [fileform] + [f for f in UPDATE_FORMATS if f != fileform]
 
+def preserve_deleted_chapters_on_conversion(adapter):
+    """Call when an update writes another format than the file it
+    reads (a conversion), before deciding on and running the update.
+
+    A conversion is meant to change only the format, so it keeps the
+    chapters of the old file that the site no longer has, as
+    update_preserve_deleted_chapters:true does, instead of refusing
+    when the site has fewer chapters than the file ('more_than_source')
+    or dropping them.  Not with a chapter range, which that setting
+    can't be combined with.  Returns True when it was turned on."""
+    if getattr(adapter, 'chapterFirst', None) is not None or \
+            getattr(adapter, 'chapterLast', None) is not None:
+        return False
+    configuration = adapter.configuration
+    if not configuration.has_section('overrides'):
+        configuration.add_section('overrides')
+    configuration.set('overrides', 'update_preserve_deleted_chapters', 'true')
+    ## Configuration caches the values it has looked up.
+    configuration.reset_cached_config()
+    return True
+
 def choose_update_source(fileform, has_format, get_chaptercount):
     """Pick which existing file of a book to update from when writing
     fileform, for callers (the calibre plugin) that can have the same

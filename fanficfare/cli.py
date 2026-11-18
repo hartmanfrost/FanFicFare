@@ -46,7 +46,8 @@ from fanficfare.fetchers.camoufoxbrowser import cli_browser_session
 from fanficfare.epubutils import unnew_chapters_epub
 from fanficfare.updatedata import (
     get_dcsource_chaptercount, get_update_data, detect_format,
-    converted_filename, UPDATE_FORMATS, choose_update_source)
+    converted_filename, UPDATE_FORMATS, choose_update_source,
+    preserve_deleted_chapters_on_conversion)
 from fanficfare.fb2utils import get_story_url_from_fb2_html
 from fanficfare.geturls import GetURLs
 from fanficfare.updategate import decide_update
@@ -515,9 +516,12 @@ def do_download(arg,
             adapter.oldcover = old_cover(update_file)
 
         # Updating from a file in another format (or file name) always
-        # writes, even without new chapters.
+        # writes, even without new chapters, and keeps chapters the
+        # site no longer has: only the format changes.
         converting = bool(update_story and update_file and
                           update_file != output_filename)
+        if converting:
+            preserve_deleted_chapters_on_conversion(adapter)
 
         # Check for include_images without no_image_processing. In absence of PIL, give warning.
         if adapter.getConfig('include_images') and not adapter.getConfig('no_image_processing'):

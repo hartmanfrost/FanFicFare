@@ -761,6 +761,57 @@ def test_cli_convert_from_epub_over_foreign_fb2(monkeypatch, capsys, tmp_path):
     assert get_update_data(str(tmp_path / 'story.fb2'))[1] == 2
 
 
+@pytest.mark.parametrize('updatealways', [False, True])
+def test_cli_convert_keeps_chapters_the_site_removed(monkeypatch, capsys, tmp_path, updatealways):
+    """A conversion only changes the format: chapters the site no longer
+    has are kept (no 'more than source' refusal), nothing is fetched."""
+    epub = fresh_file(tmp_path, 'epub', [1, 2, 3])
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(epub),
+                                      {n: body_of(n) for n in (1, 3)},
+                                      format='fb2', format_explicit=True,
+                                      updatealways=updatealways)
+    assert warned == []
+    assert adapter.fetched == []
+    data = get_update_data(str(tmp_path / 'story.fb2'))
+    assert list(data[7]) == [CH % n for n in (1, 2, 3)]
+    assert data[8][CH % 2]['title'] == u'Глава 2'
+    assert u'Текст главы 2.' in data[7][CH % 2].get_text()
+
+
+def test_cli_convert_keeps_removed_chapters_and_adds_new(monkeypatch, capsys, tmp_path):
+    epub = fresh_file(tmp_path, 'epub', [1, 2, 3])
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(epub),
+                                      {n: body_of(n) for n in (1, 3, 4)},
+                                      format='fb2', format_explicit=True)
+    assert adapter.fetched == [CH % 4]
+    assert list(get_update_data(str(tmp_path / 'story.fb2'))[7]) == \
+        [CH % n for n in (1, 2, 3, 4)]
+
+
+def test_cli_same_format_update_still_refuses_fewer_chapters(monkeypatch, capsys, tmp_path):
+    "Not a conversion: upstream's 'more than source' as before."
+    epub = fresh_file(tmp_path, 'epub', [1, 2, 3])
+    before = epub.read_bytes()
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(epub),
+                                      {n: body_of(n) for n in (1, 3)})
+    assert warned and 'contains 3 chapters, more than source: 2.' in warned[0]
+    assert epub.read_bytes() == before
+
+
+def test_cli_convert_with_chapter_range(monkeypatch, capsys, tmp_path):
+    """A chapter range can't be combined with preserving deleted
+    chapters (ConflictingOptions), so a conversion with one doesn't
+    preserve them and counts chapters in the range, as an update does."""
+    epub = fresh_file(tmp_path, 'epub', [1, 2, 3])
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(epub),
+                                      {n: body_of(n) for n in (1, 2, 3)},
+                                      format='fb2', format_explicit=True, begin='1', end='3')
+    assert warned == []
+    assert adapter.fetched == []
+    assert not adapter.preserve_deleted_chapters()
+    assert list(get_update_data(str(tmp_path / 'story.fb2'))[7]) == [CH % n for n in (1, 2, 3)]
+
+
 def test_cli_update_unreadable_fb2_fails_cleanly(monkeypatch, capsys, tmp_path):
     path = tmp_path / 'broken.fb2'
     path.write_bytes(b'<?xml version="1.0"?><FictionBook><body><section><p>unclosed')

@@ -65,7 +65,8 @@ from fanficfare.epubutils import (
 ## read EPUB or FB2, by content.
 from fanficfare.updatedata import (
     get_dcsource, get_dcsource_chaptercount,
-    UPDATE_FORMATS, choose_update_source)
+    UPDATE_FORMATS, choose_update_source,
+    preserve_deleted_chapters_on_conversion)
 from fanficfare.fb2utils import get_story_url_from_fb2_html
 
 from fanficfare.geturls import GetURLs
@@ -1754,11 +1755,14 @@ class FanFicFarePlugin(InterfaceAction):
                     if update_fmt:
                         # returns int adjusted for start-end range.
                         urlchaptercount = story.getChapterCount()
+                        ## writing the update in another format than
+                        ## the existing file's always writes, and keeps
+                        ## chapters the site no longer has.
+                        converting = update_fmt != fileform
+                        if converting:
+                            preserve_deleted_chapters_on_conversion(adapter)
                         needs_edit_check = adapter.recheck_recent_chapters()
                         preserve_deleted = adapter.preserve_deleted_chapters()
-                        ## writing the update in another format than
-                        ## the existing file's always writes.
-                        converting = update_fmt != fileform
                         update_decision = decide_update(chaptercount, urlchaptercount,
                                                        updatealways=collision == UPDATEALWAYS or converting,
                                                        needs_edit_check=needs_edit_check,

@@ -136,7 +136,8 @@ def do_download_for_worker(book,options,merge,notification=lambda x,y:x):
         from calibre_plugins.fanficfare_plugin.wordcount import get_word_count
         from fanficfare import adapters, writers
         ## 'epub_for_update' is an EPUB or an FB2.
-        from fanficfare.updatedata import get_update_data, detect_format
+        from fanficfare.updatedata import (get_update_data, detect_format,
+                                           preserve_deleted_chapters_on_conversion)
         from fanficfare.exceptions import NotGoingToDownload
         from fanficfare.updategate import decide_update
 
@@ -273,10 +274,13 @@ def do_download_for_worker(book,options,merge,notification=lambda x,y:x):
                 urlchaptercount = story.getChapterCount()
                 ## Writing another format than the existing file's
                 ## (EPUB to FB2 or back) always writes, even without
-                ## new chapters.
+                ## new chapters, and keeps chapters the site no longer
+                ## has: only the format changes.
                 update_format = book.get('update_format') or \
                     detect_format(book['epub_for_update']) or 'epub'
                 converting = update_format != options['fileform']
+                if converting:
+                    preserve_deleted_chapters_on_conversion(adapter)
                 (url,
                  chaptercount,
                  adapter.oldchapters,
