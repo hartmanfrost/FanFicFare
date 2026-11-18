@@ -32,6 +32,12 @@ from calibre.customize import InterfaceActionBase
 # pulled out from FanFicFareBase for saving in prefs.py
 __version__ = (4, 63, 4)
 
+## FanFicFare FB2 fork: revision of the fork on top of the upstream
+## version above, shown as a fourth version number (4.63.4.1).  Kept
+## out of the __version__ line so version_update.py still finds it.
+FB2_FORK_REVISION = 1
+plugin_version = __version__ + (FB2_FORK_REVISION,)
+
 ## Apparently the name for this class doesn't matter--it was still
 ## 'demo' for the first few versions.
 class FanFicFareBase(InterfaceActionBase):
@@ -44,11 +50,19 @@ class FanFicFareBase(InterfaceActionBase):
     The reason for having two classes is that it allows the command line
     calibre utilities to run without needing to load the GUI libraries.
     '''
-    name                = 'FanFicFare'
-    description         = _('UI plugin to download FanFiction stories from various sites.')
+    ## FanFicFare FB2 fork: calibre's plugin updater matches installed
+    ## plugins with its index by this name, so a different name keeps
+    ## it from offering upstream FanFicFare as an update of the fork.
+    ## The import name (fanficfare_plugin), the action name
+    ## ('FanFicFare' in fff_plugin.py) and the library settings
+    ## (PREFS_NAMESPACE in prefs.py) are the same as upstream's, so the
+    ## two can't be installed together: uninstall FanFicFare first.
+    name                = 'FanFicFare FB2'
+    description         = _('UI plugin to download FanFiction stories from various sites.') + \
+        ' (FB2 fork: https://github.com/hartmanfrost/FanFicFare)'
     supported_platforms = ['windows', 'osx', 'linux']
     author              = 'Jim Miller'
-    version             = __version__
+    version             = plugin_version
     minimum_calibre_version = (5, 0, 0)
 
     #: This field defines the GUI plugin class that contains all the code
