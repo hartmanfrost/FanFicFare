@@ -19,19 +19,33 @@
 
 * HtmlToFb2 flattens chapter (X)HTML into FB2 block elements.  It is
   used by writers/writer_fb2.py.
+* fb2_section_to_html() turns an FB2 <section> back into HTML that
+  HtmlToFb2 converts to the same FB2 again, so updating a story
+  stored as FB2 does not degrade the chapters already in it.
+* get_update_data() reads an FB2 written by FanFicFare back for
+  update, returning the same tuple as epubutils.get_update_data().
 
 FanFicFare keeps what it needs for updates (chapter URLs and the
 per-chapter data the EPUB writer stores in its fff_chapter_data meta
 tags, original image URLs, the update log, ...) as JSON in a
 <custom-info info-type="fanficfare-data"> element, which is valid
-FB2.
+FB2.  FB2 files without it (written by other programs) can still be
+read for their story URL, but have no reusable chapters.
 """
 
+import base64
+import html
+import json
 import logging
 import re
 import warnings
+import zipfile
+from io import BytesIO
+from xml.etree import ElementTree
 
 import bs4
+
+from .htmlheuristics import was_run_marker as REPLACE_BR_WITH_P_MARKER
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +56,8 @@ XLINK_NS = "http://www.w3.org/1999/xlink"
 ## data.  The JSON inside carries a version number, 'v'.
 FFF_DATA_INFO_TYPE = "fanficfare-data"
 FFF_DATA_VERSION = 1
+
+FAILED_CHAPTER_URL = "chapter url removed due to failure"
 
 ## Characters that are not allowed in XML 1.0 documents.
 _XML_ILLEGAL = re.compile(u'[\x00-\x08\x0b\x0c\x0e-\x1f￾￿\ud800-\udfff]')
@@ -481,3 +497,417 @@ def annotation_content(blocks):
     "annotationType: no images, no epigraphs."
     return [_epigraph_to_cite(b) if b.startswith(u'<epigraph>') else b
             for b in blocks if not b.startswith(u'<image')]
+
+
+##########################################################################
+## FB2 -> HTML
+
+def _local(tag):
+    if not isinstance(tag, str):
+        return ''
+    return tag.rsplit('}', 1)[-1]
+
+def _href(el):
+    for k, v in el.attrib.items():
+        if _local(k) == 'href':
+            return v
+    return None
+
+def _esc(s):
+    return html.escape(s or u'', quote=False)
+
+def _attr(s):
+    return html.escape(s or u'', quote=True)
+
+class _Fb2HtmlContext(object):
+    def __init__(self, imgurls=None, idurls=None):
+        ## binary id -> url used in <img src>
+        self.imgurls = imgurls or {}
+        ## section id -> chapter url, to undo internalize_text_links
+        self.idurls = idurls or {}
+
+    def img(self, el, block=False):
+        href = (_href(el) or u'').lstrip(u'#')
+        url = self.imgurls.get(href)
+        if not url:
+            return u''
+        alt = el.get('alt')
+        tag = u'<img src="%s" longdesc="%s"%s/>' % (
+            _attr(url), _attr(url), (u' alt="%s"' % _attr(alt)) if alt else u'')
+        if block:
+            return u'<div class="fb2_image">%s</div>' % tag
+        return tag
+
+def _inline_html(el, ctx):
+    out = [_esc(el.text)]
+    for c in el:
+        out.append(_inline_elem(c, ctx))
+        out.append(_esc(c.tail))
+    return u''.join(out)
+
+_INLINE_HTML = {'strong': 'strong', 'emphasis': 'em', 'strikethrough': 's',
+                'sub': 'sub', 'sup': 'sup', 'code': 'code', 'style': 'span'}
+
+def _inline_elem(el, ctx):
+    name = _local(el.tag)
+    if name in _INLINE_HTML:
+        t = _INLINE_HTML[name]
+        return u'<%s>%s</%s>' % (t, _inline_html(el, ctx), t)
+    if name == 'a':
+        href = _href(el) or u''
+        if href.startswith(u'#') and href[1:] in ctx.idurls:
+            href = ctx.idurls[href[1:]]
+        if href.startswith(u'#'):
+            ## links into other bodies (footnotes): keep the text.
+            return _inline_html(el, ctx)
+        return u'<a href="%s">%s</a>' % (_attr(href), _inline_html(el, ctx))
+    if name == 'image':
+        return ctx.img(el)
+    return _inline_html(el, ctx)
+
+def _blocks_html(parent, ctx, skip=('title',)):
+    out = []
+    for c in parent:
+        name = _local(c.tag)
+        if name in skip:
+            continue
+        out.append(_block_html(c, ctx))
+    return u'\n'.join(x for x in out if x)
+
+def _block_html(el, ctx):
+    name = _local(el.tag)
+    if name == 'p':
+        return u'<p>%s</p>' % _inline_html(el, ctx)
+    if name == 'subtitle':
+        return u'<h4 class="fb2_subtitle">%s</h4>' % _inline_html(el, ctx)
+    if name == 'empty-line':
+        return u'<div class="fb2_empty_line"></div>'
+    if name == 'text-author':
+        return u'<p class="fb2_text_author">%s</p>' % _inline_html(el, ctx)
+    if name == 'v':
+        return u'<p class="fb2_v">%s</p>' % _inline_html(el, ctx)
+    if name == 'image':
+        return ctx.img(el, block=True)
+    if name == 'cite':
+        return u'<blockquote class="fb2_cite">\n%s\n</blockquote>' % _blocks_html(el, ctx)
+    if name == 'epigraph':
+        return u'<blockquote class="fb2_epigraph">\n%s\n</blockquote>' % _blocks_html(el, ctx)
+    if name == 'poem':
+        out = []
+        for c in el:
+            cname = _local(c.tag)
+            if cname == 'title':
+                out.append(u'\n'.join(u'<p class="fb2_poem_title">%s</p>' % _inline_html(p, ctx)
+                                      for p in c if _local(p.tag) == 'p'))
+            elif cname == 'date':
+                out.append(u'<p class="fb2_text_author">%s</p>' % _inline_html(c, ctx))
+            else:
+                out.append(_block_html(c, ctx))
+        return u'<div class="fb2_poem">\n%s\n</div>' % u'\n'.join(x for x in out if x)
+    if name == 'stanza':
+        out = []
+        for c in el:
+            cname = _local(c.tag)
+            if cname == 'title':
+                out.extend(u'<p class="fb2_v">%s</p>' % _inline_html(p, ctx)
+                           for p in c if _local(p.tag) == 'p')
+            elif cname in ('subtitle', 'v'):
+                out.append(u'<p class="fb2_v">%s</p>' % _inline_html(c, ctx))
+        return u'<div class="fb2_stanza">\n%s\n</div>' % u'\n'.join(out)
+    if name == 'table':
+        rows = []
+        for tr in el:
+            cells = []
+            for td in tr:
+                t = 'th' if _local(td.tag) == 'th' else 'td'
+                cells.append(u'<%s>%s</%s>' % (t, _inline_html(td, ctx), t))
+            rows.append(u'<tr>%s</tr>' % u''.join(cells))
+        return u'<table>%s</table>' % u''.join(rows)
+    if name == 'section':
+        ## nested sections, only in FB2 from other programs.
+        out = []
+        for c in el:
+            if _local(c.tag) == 'title':
+                out.append(u'\n'.join(u'<h3>%s</h3>' % _inline_html(p, ctx)
+                                      for p in c if _local(p.tag) == 'p'))
+            else:
+                out.append(_block_html(c, ctx))
+        return u'\n'.join(x for x in out if x)
+    if name == 'annotation':
+        return u'<div>\n%s\n</div>' % _blocks_html(el, ctx)
+    ## unknown: keep any text
+    text = _inline_html(el, ctx)
+    return (u'<p>%s</p>' % text) if text.strip() else u''
+
+def fb2_section_to_html(section, imgurls=None, idurls=None):
+    """HTML for the content of an FB2 <section> (without its title).
+
+    imgurls: {binary id: url to use as img src}
+    idurls: {section id: chapter url} to turn internal links back into
+    chapter URLs.
+
+    The HTML starts with replace_br_with_p's marker: it's already in
+    paragraphs, and running that again would drop the empty lines.
+    """
+    return u'<!-- %s -->\n%s' % (REPLACE_BR_WITH_P_MARKER,
+                                 _blocks_html(section, _Fb2HtmlContext(imgurls, idurls)))
+
+
+##########################################################################
+## Reading FB2 files
+
+_XML_ENTITIES = ('amp', 'lt', 'gt', 'quot', 'apos')
+
+def _fix_entities(data):
+    "Replace HTML named entities, which are not defined in FB2/XML."
+    def repl(m):
+        if m.group(1) in _XML_ENTITIES:
+            return m.group(0)
+        u = html.unescape(m.group(0))
+        if u == m.group(0):
+            return u'&amp;' + m.group(0)[1:]
+        return xtext(u)
+    return re.sub(r'&([A-Za-z][A-Za-z0-9]*);', repl, data)
+
+def _read_bytes(inputio):
+    if hasattr(inputio, 'read'):
+        if hasattr(inputio, 'seek'):
+            inputio.seek(0)
+        data = inputio.read()
+    else:
+        with open(inputio, 'rb') as f:
+            data = f.read()
+    if data[:2] == b'PK':
+        ## .fb2.zip: one fb2 file in a zip.
+        zf = zipfile.ZipFile(BytesIO(data))
+        names = [n for n in zf.namelist() if n.lower().endswith('.fb2')]
+        if not names:
+            raise ValueError("No .fb2 file found in zip")
+        data = zf.read(names[0])
+    return data
+
+def is_fb2_data(data):
+    "True if bytes data (the start of a file is enough) look like FB2."
+    head = data[:4096]
+    if head[:2] == b'PK':
+        try:
+            zf = zipfile.ZipFile(BytesIO(data))
+            names = zf.namelist()
+            return 'META-INF/container.xml' not in names and \
+                any(n.lower().endswith('.fb2') for n in names)
+        except Exception:
+            return False
+    for enc in ('utf-8', 'utf-16'):
+        try:
+            if u'<FictionBook' in head.decode(enc, 'ignore'):
+                return True
+        except Exception:
+            pass
+    return b'<FictionBook' in head
+
+def parse_fb2(inputio):
+    """Parse an FB2 file (path, file object, .fb2 or .fb2.zip) into an
+    ElementTree root element with namespaces removed from tag names."""
+    data = _read_bytes(inputio)
+    try:
+        root = ElementTree.fromstring(data)
+    except ElementTree.ParseError:
+        ## FB2 from other programs sometimes use HTML entities.
+        m = re.match(br'<\?xml[^>]*encoding=["\']([A-Za-z0-9_.-]+)["\']', data)
+        enc = m.group(1).decode('ascii') if m else 'utf-8'
+        text = data.decode(enc, 'replace')
+        text = re.sub(r'^<\?xml[^>]*\?>', '', text)
+        root = ElementTree.fromstring(_fix_entities(text).encode('utf-8'))
+    for el in root.iter():
+        if isinstance(el.tag, str) and '}' in el.tag:
+            el.tag = _local(el.tag)
+    return root
+
+def _first_body(root):
+    for body in root.findall('body'):
+        if body.get('name') != 'notes':
+            return body
+    return None
+
+def get_fff_data(root):
+    "FanFicFare's custom-info JSON, or {}."
+    for ci in root.iter('custom-info'):
+        if ci.get('info-type') == FFF_DATA_INFO_TYPE:
+            try:
+                data = json.loads(ci.text or '{}')
+                if isinstance(data, dict):
+                    return data
+            except ValueError as e:
+                logger.warning("Failed to parse FB2 %s custom-info: %s" % (FFF_DATA_INFO_TYPE, e))
+    return {}
+
+def _src_url(root, fffdata):
+    for el in root.iter('src-url'):
+        if el.text and el.text.strip():
+            return el.text.strip()
+    return (fffdata.get('story') or {}).get('storyUrl')
+
+def _binaries(root):
+    "{id: (content-type, bytes)}"
+    retval = {}
+    for b in root.iter('binary'):
+        bid = b.get('id')
+        if not bid:
+            continue
+        try:
+            retval[bid] = (b.get('content-type') or '',
+                           base64.b64decode(re.sub(r'\s+', '', b.text or '')))
+        except Exception as e:
+            logger.warning("FB2 binary %s could not be decoded: %s" % (bid, e))
+    return retval
+
+def _ext_for(bid, mime):
+    ext = bid.rsplit('.', 1)[-1].lower() if '.' in bid else ''
+    if ext in ('jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'avif'):
+        return ext
+    return MIME_EXT.get((mime or '').lower(), 'jpg')
+
+def _cover_id(root):
+    for cp in root.iter('coverpage'):
+        for img in cp:
+            href = _href(img)
+            if href:
+                return href.lstrip('#')
+    return None
+
+def make_soup(data):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return bs4.BeautifulSoup(data, 'html5lib')
+
+## The EPUB writer needs a cover page when the cover image of an FB2
+## is carried over into an EPUB.
+COVER_XHTML = u'''<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en"><head><title>Cover</title><style type="text/css" title="override_css">
+@page {padding: 0pt; margin:0pt}
+body { text-align: center; padding:0pt; margin: 0pt; }
+div { margin: 0pt; padding: 0pt; }
+</style></head><body class="fff_coverpage"><div>
+<img src="%s" alt="cover"/>
+</div></body></html>
+'''
+
+def get_update_data(inputio,
+                    getfilecount=True,
+                    getsoups=True):
+    """Read an FB2 written by FanFicFare back for update.
+
+    Returns the same tuple as epubutils.get_update_data():
+    (source, filecount, soups, images, oldcover, calibrebookmark,
+     logfile, urlsoups, datamaps)
+
+    FB2 files without FanFicFare's custom-info have no reusable
+    chapters: filecount is 0 and soups/urlsoups are empty.
+    """
+    root = parse_fb2(inputio)
+    fffdata = get_fff_data(root)
+    source = _src_url(root, fffdata)
+
+    chapters = [c for c in fffdata.get('chapters') or []
+                if isinstance(c, dict) and c.get('url') != FAILED_CHAPTER_URL]
+    filecount = len(chapters) if getfilecount else 0
+    soups = []
+    images = {}
+    urlsoups = {}
+    datamaps = {}
+    oldcover = None
+    calibrebookmark = None
+    logfile = fffdata.get('logfile')
+
+    if getsoups:
+        binaries = _binaries(root)
+        coverid = _cover_id(root)
+        imgjson = fffdata.get('images') or {}
+        ## url each binary is known by: its original URL when
+        ## FanFicFare recorded one.
+        imgurls = {}
+        for bid, (mime, data) in binaries.items():
+            imgurls[bid] = imgjson.get(bid) or ('fb2binary:%s' % bid)
+
+        if coverid and coverid in binaries:
+            mime, data = binaries[coverid]
+            ext = _ext_for(coverid, mime)
+            oldcover = ('OEBPS/cover.xhtml',
+                        'application/xhtml+xml',
+                        (COVER_XHTML % ('images/cover.%s' % ext)).encode('utf-8'),
+                        'OEBPS/images/cover.%s' % ext,
+                        EXT_MIME[ext],
+                        data)
+
+        sections = {}
+        body = _first_body(root)
+        if body is not None:
+            for sec in body.iter('section'):
+                if sec.get('id'):
+                    sections.setdefault(sec.get('id'), sec)
+        idurls = dict((c.get('fb2_id'), c.get('url')) for c in chapters if c.get('fb2_id'))
+
+        used = set()
+        for chap in chapters:
+            sec = sections.get(chap.get('fb2_id'))
+            if sec is None:
+                logger.warning("Chapter section %s not found in FB2, skipping." % chap.get('fb2_id'))
+                filecount -= 1 if getfilecount else 0
+                continue
+            for img in sec.iter('image'):
+                used.add((_href(img) or '').lstrip('#'))
+            bodysoup = make_soup(u'<html><body>%s</body></html>' %
+                                 fb2_section_to_html(sec, imgurls, idurls)).find('body')
+            url = chap.get('url')
+            if url and url not in urlsoups:
+                urlsoups[url] = bodysoup
+            data = dict(chap)
+            data.pop('fb2_id', None)
+            datamaps[url] = data
+            soups.append(bodysoup)
+
+        for bid, (mime, data) in binaries.items():
+            if bid == coverid and bid not in used:
+                ## the cover is carried by oldcover.
+                continue
+            ## only the extension of this name matters, see
+            ## story.load_oldimgs()
+            ext = _ext_for(bid, mime)
+            name = bid if bid.lower().endswith('.' + ext) else '%s.%s' % (bid, ext)
+            images[imgurls[bid]] = ('images/%s' % name, data)
+
+        if fffdata.get('calibrebookmark'):
+            try:
+                calibrebookmark = base64.b64decode(fffdata['calibrebookmark'])
+            except Exception:
+                pass
+
+    return (source, filecount, soups, images, oldcover, calibrebookmark,
+            logfile, urlsoups, datamaps)
+
+def get_dcsource(inputio):
+    root = parse_fb2(inputio)
+    return _src_url(root, get_fff_data(root))
+
+def get_dcsource_chaptercount(inputio):
+    return get_update_data(inputio, getfilecount=True, getsoups=False)[:2]
+
+def get_story_url_from_fb2_html(inputio, _is_good_url=None):
+    """First link in the FB2 accepted by _is_good_url.  For FB2 files
+    from other programs (calibre's conversion of an FFF EPUB keeps the
+    title page links), which have no src-url."""
+    root = parse_fb2(inputio)
+    for el in root.iter('a'):
+        href = _href(el)
+        if href and href.startswith('http') and (_is_good_url is None or _is_good_url(href)):
+            return href
+    return None
+
+def get_cover_img(inputio):
+    "(content-type, data) of the cover image, or (None, None)."
+    root = parse_fb2(inputio)
+    coverid = _cover_id(root)
+    binaries = _binaries(root)
+    if coverid in binaries:
+        return binaries[coverid]
+    return None, None
