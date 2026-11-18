@@ -9,7 +9,7 @@
 # so pushes that touch only docs, tests or scripts build nothing.
 # First image: push fb2 (skipped: not the default branch yet), make fb2 the default
 # branch and install the argoash App (no push event, nothing built), then push a
-# commit that changes one of `paths`, for example this comment.
+# commit that changes one of `paths`, for example this comment. First image built 2026-11-18.
 images:
   - image: ghcr.io/hartmanfrost/fanficfare-calibre-plugin
     context: .
