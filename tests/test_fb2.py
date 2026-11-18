@@ -628,25 +628,115 @@ def test_cli_update_preserves_deleted_chapter_in_fb2(monkeypatch, capsys, tmp_pa
     assert data[8][CH % 2]['title'] == u'Глава 2'
 
 
-def test_cli_update_foreign_fb2_downloads_everything(monkeypatch, capsys, tmp_path):
-    "FB2 without FanFicFare data (eg calibre's conversion): full download."
-    path = tmp_path / 'foreign.fb2'
-    path.write_bytes((
+def foreign_fb2_bytes(cover=False):
+    "An FB2 without FanFicFare data, as calibre's conversion of an FFF EPUB."
+    return (
         u'<?xml version="1.0" encoding="UTF-8"?>\n'
         u'<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" '
         u'xmlns:l="http://www.w3.org/1999/xlink"><description><title-info>'
         u'<genre>sf_fantasy</genre><author><first-name/><last-name>X</last-name></author>'
-        u'<book-title>T</book-title><lang>ru</lang></title-info>'
+        u'<book-title>T</book-title>%s<lang>ru</lang></title-info>'
         u'<document-info><program-used>calibre</program-used></document-info></description>'
         u'<body><section><p><a l:href="https://example.com/authors/1">by</a> '
         u'<a l:href="%s">Story</a></p></section>'
-        u'<section><p>Old text</p></section></body></FictionBook>' % STORY_URL).encode('utf-8'))
+        u'<section><p>Old text</p></section></body>%s</FictionBook>' % (
+            u'<coverpage><image l:href="#cover.png"/></coverpage>' if cover else u'',
+            STORY_URL,
+            u'<binary id="cover.png" content-type="image/png">%s</binary>' %
+            base64.b64encode(PNG).decode('ascii') if cover else u'')).encode('utf-8')
+
+
+def test_cli_update_foreign_fb2_downloads_everything(monkeypatch, capsys, tmp_path):
+    "FB2 without FanFicFare data (eg calibre's conversion): full download."
+    path = tmp_path / 'foreign.fb2'
+    path.write_bytes(foreign_fb2_bytes())
     adapter, output, warned = run_cli(monkeypatch, capsys, str(path),
                                       {n: body_of(n) for n in (1, 2)})
     assert 'has no FanFicFare chapter data' in output
     assert adapter.fetched == [CH % 1, CH % 2]
     data = get_update_data(str(path))
     assert data[0] == STORY_URL and data[1] == 2
+
+
+def test_cli_update_by_url_foreign_fb2_downloads_everything(monkeypatch, capsys, tmp_path):
+    "-u URL with only an FB2 from another program: as -u that file."
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'story.fb2').write_bytes(foreign_fb2_bytes())
+    adapter, output, warned = run_cli(monkeypatch, capsys, STORY_URL,
+                                      {n: body_of(n) for n in (1, 2)},
+                                      personal=PERSONAL + 'output_filename: story${formatext}\n',
+                                      format='fb2', format_explicit=True)
+    assert 'story.fb2 has no FanFicFare chapter data' in output
+    assert warned == []
+    assert adapter.fetched == [CH % 1, CH % 2]
+    assert get_update_data('story.fb2')[1] == 2
+
+
+def test_cli_update_by_url_skips_foreign_fb2_for_epub(monkeypatch, capsys, tmp_path):
+    """-u URL -f fb2 with an FB2 from another program and a FanFicFare
+    EPUB of the same name: convert the EPUB (as the plugin does)."""
+    monkeypatch.chdir(tmp_path)
+    fresh_file(tmp_path, 'epub', [1, 2])
+    (tmp_path / 'story.fb2').write_bytes(foreign_fb2_bytes())
+    adapter, output, warned = run_cli(monkeypatch, capsys, STORY_URL,
+                                      {n: body_of(n) for n in (1, 2, 3)},
+                                      personal=PERSONAL + 'output_filename: story${formatext}\n',
+                                      format='fb2', format_explicit=True)
+    assert 'Converting story.epub to fb2: story.fb2' in output
+    assert warned == []
+    assert adapter.fetched == [CH % 3]
+    assert list(get_update_data('story.fb2')[7]) == [CH % n for n in (1, 2, 3)]
+
+
+def test_cli_update_by_url_prefers_fffs_fb2_over_epub(monkeypatch, capsys, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    fresh_file(tmp_path, 'epub', [1])
+    fresh_file(tmp_path, 'fb2', [1, 2])
+    adapter, output, warned = run_cli(monkeypatch, capsys, STORY_URL,
+                                      {n: body_of(n) for n in (1, 2, 3)},
+                                      personal=PERSONAL + 'output_filename: story${formatext}\n',
+                                      format='fb2', format_explicit=True)
+    assert 'Updating story.fb2, URL' in output and 'Converting' not in output
+    assert adapter.fetched == [CH % 3]
+
+
+def test_cli_convert_again_updates_the_converted_file(monkeypatch, capsys, tmp_path):
+    """Running '-u story.epub -f fb2' again (an interrupted batch) updates
+    story.fb2 from itself: nothing fetched again, nothing lost."""
+    epub = fresh_file(tmp_path, 'epub', [1, 2])
+    fb2 = tmp_path / 'story.fb2'
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(epub),
+                                      {n: body_of(n) for n in (1, 2, 3)},
+                                      format='fb2', format_explicit=True)
+    assert adapter.fetched == [CH % 3]
+    before = fb2.read_bytes()
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(epub),
+                                      {n: body_of(n) for n in (1, 2, 3)},
+                                      format='fb2', format_explicit=True)
+    assert 'story.fb2 already has FanFicFare chapter data: updating it instead of converting' in output
+    assert 'already contains 3 chapters.' in output
+    assert adapter.fetched == []
+    assert fb2.read_bytes() == before
+
+    ## chapter 3 removed from the site: story.fb2 keeps it, as -u
+    ## story.fb2 would, instead of being rewritten from the EPUB.
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(epub),
+                                      {n: body_of(n) for n in (1, 2)},
+                                      format='fb2', format_explicit=True)
+    assert warned and 'more than source' in warned[0]
+    assert list(get_update_data(str(fb2))[7]) == [CH % n for n in (1, 2, 3)]
+
+
+def test_cli_convert_from_epub_over_foreign_fb2(monkeypatch, capsys, tmp_path):
+    "An FB2 from another program next to the EPUB is converted over."
+    epub = fresh_file(tmp_path, 'epub', [1, 2])
+    (tmp_path / 'story.fb2').write_bytes(foreign_fb2_bytes())
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(epub),
+                                      {n: body_of(n) for n in (1, 2)},
+                                      format='fb2', format_explicit=True)
+    assert 'Converting' in output
+    assert adapter.fetched == []
+    assert get_update_data(str(tmp_path / 'story.fb2'))[1] == 2
 
 
 def test_cli_update_unreadable_fb2_fails_cleanly(monkeypatch, capsys, tmp_path):

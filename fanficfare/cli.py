@@ -46,7 +46,7 @@ from fanficfare.fetchers.camoufoxbrowser import cli_browser_session
 from fanficfare.epubutils import unnew_chapters_epub
 from fanficfare.updatedata import (
     get_dcsource_chaptercount, get_update_data, detect_format,
-    converted_filename, UPDATE_FORMATS)
+    converted_filename, UPDATE_FORMATS, choose_update_source)
 from fanficfare.fb2utils import get_story_url_from_fb2_html
 from fanficfare.geturls import GetURLs
 from fanficfare.updategate import decide_update
@@ -419,8 +419,20 @@ def do_download(arg,
                 output_filename = arg
             else:
                 output_filename = converted_filename(arg, writeformat)
-                print('Converting %s to %s: %s' % (arg, writeformat, output_filename))
-            print('Updating %s, URL: %s' % (arg, url))
+                target_url, target_count = reusable_chapters(output_filename)
+                if target_count:
+                    # Converted before (eg a batch over *.epub run
+                    # again): update that file, which may have newer
+                    # chapters than arg, instead of converting again.
+                    print('%s already has FanFicFare chapter data: updating it instead of converting %s.' % (output_filename, arg))
+                    update_file = output_filename
+                    update_format = writeformat
+                    chaptercount = target_count
+                    url = target_url or url
+                    full_redownload = False
+                else:
+                    print('Converting %s to %s: %s' % (arg, writeformat, output_filename))
+            print('Updating %s, URL: %s' % (update_file, url))
             if full_redownload:
                 print('%s has no FanFicFare chapter data, all chapters will be downloaded again.' % arg)
         except Exception as e:
@@ -468,19 +480,31 @@ def do_download(arg,
             try:
                 writer = writers.getWriter(writeformat, configuration, adapter)
                 output_filename = writer.getOutputFileName()
-                update_file = output_filename
-                if not os.path.exists(update_file):
-                    # No file in the format being written, use one of
-                    # the same name in another format if there is one.
-                    for fmt in UPDATE_FORMATS:
-                        other = converted_filename(output_filename, fmt)
-                        if fmt != writeformat and os.path.isfile(other):
-                            print('Converting %s to %s: %s' % (other, writeformat, output_filename))
-                            update_file = other
-                            break
-                noturl, chaptercount = get_dcsource_chaptercount(update_file)
+                # The file to update, as the calibre plugin picks it:
+                # a FanFicFare file in the format being written, else
+                # one of the same name in the other format (a
+                # conversion).  FB2s without FanFicFare data are passed
+                # over.
+                update_file, chaptercount = find_update_file(output_filename, writeformat)
+                if update_file is None:
+                    # Nothing to reuse.  Reading output_filename fails
+                    # (below) if it doesn't exist or can't be read, as
+                    # before; an FB2 from another program is replaced
+                    # by a full download.
+                    update_file = output_filename
+                    noturl, chaptercount = get_dcsource_chaptercount(update_file)
                 update_format = detect_format(update_file) or 'epub'
-                print('Updating %s, URL: %s' % (update_file, url))
+                if update_format == 'fb2' and not chaptercount:
+                    print('%s has no FanFicFare chapter data, all chapters will be downloaded again.' % update_file)
+                    full_redownload = True
+                    update_story = False
+                    set_override(configuration, 'always_overwrite', 'true')
+                else:
+                    if update_file != output_filename:
+                        print('Converting %s to %s: %s' % (update_file, writeformat, output_filename))
+                        # replaces an FB2 from another program there.
+                        set_override(configuration, 'always_overwrite', 'true')
+                    print('Updating %s, URL: %s' % (update_file, url))
             except Exception as e:
                 warn("Failed to read %s for update: (%s) Continuing with update=false"%(writeformat,e))
                 update_story = False
@@ -680,6 +704,44 @@ def do_download(arg,
         fail(us)
     except exceptions.AccessDenied as ad:
         fail(ad)
+
+def reusable_chapters(path):
+    """(story url, chapters FanFicFare can reuse) of an existing story
+    file; (None, 0) when there's no such file or it can't be read."""
+    if not os.path.isfile(path):
+        return None, 0
+    try:
+        url, count = get_dcsource_chaptercount(path)
+        return url, count or 0
+    except Exception as e:
+        logger.warning("Can't read %s for update, not used: %s" % (path, e))
+        return None, 0
+
+def find_update_file(output_filename, writeformat):
+    """(file, chaptercount) to update output_filename from when
+    updating by URL, chosen as the calibre plugin does
+    (updatedata.choose_update_source): output_filename itself if
+    FanFicFare can reuse its chapters, else the file of the same name in
+    the other format (a conversion).  FB2s without FanFicFare data are
+    passed over; an EPUB without recognizable chapters is still returned
+    (with 0) when nothing better is found.  (None, None): nothing."""
+    def path_for(fmt):
+        if fmt == writeformat:
+            return output_filename
+        return converted_filename(output_filename, fmt)
+    fmt, count = choose_update_source(
+        writeformat,
+        lambda fmt: os.path.isfile(path_for(fmt)),
+        lambda fmt: get_dcsource_chaptercount(path_for(fmt))[1])
+    if fmt is None:
+        return None, None
+    return path_for(fmt), count
+
+def set_override(configuration, key, value):
+    "Set key in [overrides] of a configuration that may have been used already."
+    configuration.set('overrides', key, value)
+    ## Configuration caches the values it has looked up.
+    configuration.reset_cached_config()
 
 def _is_story_url(url):
     return adapters.getNormalStoryURL(url) is not None
