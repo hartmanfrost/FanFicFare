@@ -311,6 +311,20 @@ class BaseSiteAdapter(Requestable):
         re-downloaded during an update (recent-window)."""
         return bool(int(self.getConfig('update_check_recent_chapters') or 0))
 
+    def _chapter_content_changed(self, fresh, old):
+        """True when a freshly downloaded chapter's text differs from
+        the stored chapter's (an old epub's or FB2's soup)."""
+        from .. import fb2utils
+        if fb2utils.is_fb2_readback(old):
+            ## Read back from an FB2, which has the chapter split
+            ## into paragraphs: compare both as FB2 text, with the FB2
+            ## writer's settings.
+            kw = dict(prewrap_classes=self.getConfigList('fb2_prewrap_classes',
+                                                         ['part_text', 'text-preline']),
+                      hr_text=self.getConfig('fb2_hr_text', u'* * *'))
+            return fb2utils.comparable_text(fresh, **kw) != fb2utils.comparable_text(old, **kw)
+        return self._chapter_text(fresh) != self._chapter_text(old)
+
     def _recheck_chapter(self, url, index):
         """Re-download a chapter for edit detection and keep the fresh
         version only if its content differs from the stored one.
@@ -321,7 +335,7 @@ class BaseSiteAdapter(Requestable):
         """
         try:
             fresh_data = self.getChapterTextNum(url, index)
-            if self._chapter_text(fresh_data) != self._chapter_text(self.oldchaptersmap[url]):
+            if self._chapter_content_changed(fresh_data, self.oldchaptersmap[url]):
                 # Content changed, use fresh version
                 self.story.chapter_updated_count += 1
                 logger.info("Chapter %d (%s) content changed, using updated version" % (index+1, url))

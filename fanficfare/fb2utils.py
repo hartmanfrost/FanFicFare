@@ -665,6 +665,35 @@ def _block_html(el, ctx):
     text = _inline_html(el, ctx)
     return (u'<p>%s</p>' % text) if text.strip() else u''
 
+## Attribute of the <body> of the chapter soups get_update_data()
+## returns, so code comparing them with freshly downloaded chapters
+## knows they come from an FB2 (see is_fb2_readback()).  The body tag
+## isn't part of the chapter HTML written out again.
+FB2_READBACK_ATTR = 'data-fff-readback'
+
+def is_fb2_readback(soup):
+    "True for a chapter soup read back from an FB2 by get_update_data()."
+    return isinstance(soup, bs4.element.Tag) and soup.get(FB2_READBACK_ATTR) == 'fb2'
+
+def comparable_text(html_or_soup, prewrap_classes=('part_text', 'text-preline'),
+                    hr_text=u'* * *'):
+    """The text of chapter HTML as it is in an FB2, for telling whether
+    a chapter changed on the site (update_check_recent_chapters) when
+    the stored copy was read back from an FB2.
+
+    The FB2 has the chapter in paragraphs: pre-wrap line breaks split,
+    <hr> as a subtitle, list items with bullets.  Its plain text joins
+    them differently from the text of the site's HTML, so both sides go
+    through HtmlToFb2 (prewrap_classes and hr_text as the writer's
+    fb2_prewrap_classes and fb2_hr_text), which gives the read-back
+    chapter its same FB2 again.  Images count by their alt text."""
+    if isinstance(html_or_soup, bytes):
+        html_or_soup = html_or_soup.decode('utf-8', 'replace')
+    blocks = HtmlToFb2(allow_images=False, prewrap_classes=prewrap_classes,
+                       hr_text=hr_text).convert(u'%s' % (html_or_soup or u''))
+    text = html.unescape(re.sub(r'<[^>]+>', u'', u'\n'.join(blocks)))
+    return re.sub(r'\s+', u' ', text).strip()
+
 def fb2_section_to_html(section, imgurls=None, idurls=None):
     """HTML for the content of an FB2 <section> (without its title).
 
@@ -882,8 +911,8 @@ def get_update_data(inputio,
                 continue
             for img in sec.iter('image'):
                 used.add((_href(img) or '').lstrip('#'))
-            bodysoup = make_soup(u'<html><body>%s</body></html>' %
-                                 fb2_section_to_html(sec, imgurls, idurls)).find('body')
+            bodysoup = make_soup(u'<html><body %s="fb2">%s</body></html>' % (
+                    FB2_READBACK_ATTR, fb2_section_to_html(sec, imgurls, idurls))).find('body')
             url = chap.get('url')
             if url and url not in urlsoups:
                 urlsoups[url] = bodysoup

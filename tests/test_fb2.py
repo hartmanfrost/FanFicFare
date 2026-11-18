@@ -861,3 +861,83 @@ def test_cli_update_fb2_zip_in_place(monkeypatch, capsys, tmp_path):
     assert detect_format(str(path)) == 'fb2'
     assert get_update_data(str(path))[1] == 3
     assert sorted(os.listdir(str(tmp_path))) == ['story.fb2.zip']
+
+
+RECHECK = PERSONAL.replace('update_check_recent_chapters:0', 'update_check_recent_chapters:3')
+
+RECHECK_CASES = {
+    'hr': u'<p>a</p><hr/><p>b</p>',
+    'li': u'<p>x</p><ul><li>one</li><li>two</li></ul>',
+    'imgalt': u'<p>see <img src="http://nowhere.invalid/x.png" alt="ALT"/> here</p>',
+    'ficbook': u'<div class="part_text">Строка один\nСтрока два\n\n\n<p>* * *</p>\nДальше</div>',
+    'rich': RICH_CHAPTER,
+}
+
+
+@pytest.mark.parametrize('case', sorted(RECHECK_CASES))
+@pytest.mark.parametrize('fileform', ['fb2', 'epub'])
+def test_cli_recheck_unchanged_chapters_are_not_changes(monkeypatch, capsys, tmp_path, case, fileform):
+    """update_check_recent_chapters re-downloads the last chapters and
+    compares them with the stored ones: an FB2's read-back chapters must
+    compare equal to the same site HTML, as an EPUB's do."""
+    content = {1: RECHECK_CASES[case], 2: body_of(2)}
+    path = fresh_file(tmp_path, fileform, [1, 2], content=content, personal=RECHECK)
+    before = path.read_bytes()
+    for run in range(2):
+        adapter, output, warned = run_cli(monkeypatch, capsys, str(path), content,
+                                          personal=RECHECK)
+        assert sorted(adapter.fetched) == [CH % 1, CH % 2], 'rechecked'
+        assert adapter.story.chapter_updated_count == 0
+        assert 'already contains 2 chapters.' in output
+        assert path.read_bytes() == before
+
+
+def test_cli_recheck_fb2_still_sees_real_edits(monkeypatch, capsys, tmp_path):
+    content = {1: RECHECK_CASES['ficbook'], 2: body_of(2)}
+    path = fresh_file(tmp_path, 'fb2', [1, 2], content=content, personal=RECHECK)
+    edited = dict(content)
+    edited[1] = edited[1].replace(u'Строка два', u'Строка два, исправленная')
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(path), edited, personal=RECHECK)
+    assert adapter.story.chapter_updated_count == 1
+    assert 'Do update - fb2(2) vs url(2)' in output
+    assert u'Строка два, исправленная' in get_update_data(str(path))[7][CH % 1].get_text()
+
+
+def test_cli_recheck_fb2_with_images(monkeypatch, capsys, tmp_path):
+    img = tmp_path / 'pic.png'
+    img.write_bytes(PNG)
+    personal = RECHECK.replace('include_images:false', 'include_images:true') + \
+        'no_image_processing:true\n'
+    content = {1: u'<p>a <img src="%s" alt="pic"/> b</p><div class="poem"><p>v<br/>'
+                  u'<img src="%s"/></p></div>' % (img.as_uri(), img.as_uri()),
+               2: body_of(2)}
+    path = fresh_file(tmp_path, 'fb2', [1, 2], content=content, personal=personal)
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(path), content, personal=personal)
+    assert adapter.story.chapter_updated_count == 0
+    assert 'already contains 2 chapters.' in output
+
+
+def test_cli_recheck_fb2_to_epub_conversion(monkeypatch, capsys, tmp_path):
+    "Writing EPUB from an FB2: [fb2] settings don't apply, the defaults do."
+    content = {1: RECHECK_CASES['ficbook'], 2: body_of(2)}
+    fb2 = fresh_file(tmp_path, 'fb2', [1, 2], content=content, personal=RECHECK)
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(fb2), content, personal=RECHECK,
+                                      format='epub', format_explicit=True)
+    assert adapter.story.chapter_updated_count == 0
+    epub = tmp_path / 'story.epub'
+    assert epub_get_update_data(str(epub))[1] == 2
+    ## the read-back marker is not written out
+    import zipfile
+    with zipfile.ZipFile(str(epub)) as z:
+        assert not any(fb2utils.FB2_READBACK_ATTR.encode() in z.read(n) for n in z.namelist())
+
+
+def test_fb2_readback_marker():
+    adapter = make_adapter(make_config(), {1: body_of(1)})
+    data = write_fb2(adapter)
+    soups = get_update_data(io.BytesIO(data))[7]
+    assert all(fb2utils.is_fb2_readback(s) for s in soups.values())
+    assert fb2utils.FB2_READBACK_ATTR not in adapter.utf8FromSoup(None, soups[CH % 1])
+    epub = io.BytesIO()
+    EpubWriter(make_config('epub'), make_adapter(make_config('epub'), {1: body_of(1)})).writeStory(outstream=epub)
+    assert not any(fb2utils.is_fb2_readback(s) for s in epub_get_update_data(epub)[7].values())
