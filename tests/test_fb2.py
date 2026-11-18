@@ -572,3 +572,18 @@ def test_cli_validate_update_formats():
     options, args = parser.parse_args(['x'])
     cli.expandOptions(options)
     assert options.format == 'epub' and options.format_explicit is False
+
+
+def test_cli_update_fb2_mark_new_chapters(monkeypatch, capsys, tmp_path):
+    personal = PERSONAL + 'mark_new_chapters:true\n'
+    path = fresh_file(tmp_path, 'fb2', [1, 2])
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(path),
+                                      {n: body_of(n) for n in (1, 2, 3)},
+                                      personal=personal)
+    assert adapter.fetched == [CH % 3]
+    text = path.read_text(encoding='utf-8')
+    titles = re.findall(r'<section id="ch\d+"><title><p>(.*?)</p>', text)
+    assert titles == [u'Глава 1', u'Глава 2', u'(new) Глава 3']
+    datamaps = get_update_data(str(path))[8]
+    assert datamaps[CH % 3]['mark_new'] is True
+    assert datamaps[CH % 1]['mark_new'] is False
