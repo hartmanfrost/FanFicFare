@@ -116,6 +116,15 @@ class FanFicFareBase(InterfaceActionBase):
             ac.apply_settings()
 
     def load_actual_plugin(self, gui):
+        ## FanFicFare FB2 fork: upstream FanFicFare has the same import
+        ## name and its own copy of the fanficfare package, so with both
+        ## installed calibre loads a mix of the two and neither works.
+        from calibre.customize.ui import initialized_plugins
+        names = set(p.name for p in initialized_plugins())
+        if 'FanFicFare' in names and 'FanFicFare FB2' in names:
+            raise Exception("The 'FanFicFare FB2' and 'FanFicFare' plugins can't be installed together."
+                            "  Remove one of them in Preferences > Plugins and restart calibre.")
+
         # so the sys.path was modified while loading the plug impl.
         with self:
 
