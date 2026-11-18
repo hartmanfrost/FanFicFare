@@ -396,10 +396,12 @@ def run_cli(monkeypatch, capsys, arg, content, personal=PERSONAL, cover_url=None
     return made[-1] if made else None, capsys.readouterr().out, warned
 
 
-def fresh_file(tmp_path, fileform, nums, name='story'):
-    adapter = make_adapter(make_config(fileform), {n: body_of(n) for n in nums})
+def fresh_file(tmp_path, fileform, nums, name='story', content=None, personal=PERSONAL,
+               ext=None):
+    content = content or {n: body_of(n) for n in nums}
+    adapter = make_adapter(make_config(fileform, personal), content)
     adapter.getStory()
-    path = tmp_path / ('%s.%s' % (name, fileform))
+    path = tmp_path / ('%s.%s' % (name, ext or fileform))
     writer = FB2Writer if fileform == 'fb2' else EpubWriter
     with open(str(path), 'wb') as out:
         writer(adapter.configuration, adapter).writeStory(outstream=out)
@@ -407,18 +409,19 @@ def fresh_file(tmp_path, fileform, nums, name='story'):
 
 
 def test_cli_update_fb2_no_new_chapters_fetches_nothing(monkeypatch, capsys, tmp_path):
-    path = fresh_file(tmp_path, 'fb2', [1, 2, 3])
+    ## RICH_CHAPTER has entities, control chars and every construct the
+    ## converter knows; the -U rewrite below must not change it.
+    content = {1: RICH_CHAPTER, 2: body_of(2), 3: body_of(3)}
+    path = fresh_file(tmp_path, 'fb2', [1, 2, 3], content=content)
     before = path.read_bytes()
-    adapter, output, warned = run_cli(monkeypatch, capsys, str(path),
-                                      {n: body_of(n) for n in (1, 2, 3)})
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(path), content)
     assert 'already contains 3 chapters.' in output
     assert adapter.fetched == []
     assert path.read_bytes() == before
     assert warned == []
 
     ## -U rewrites the file, still without downloading chapters.
-    adapter, output, warned = run_cli(monkeypatch, capsys, str(path),
-                                      {n: body_of(n) for n in (1, 2, 3)},
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(path), content,
                                       updatealways=True)
     assert 'Do update - fb2(3) vs url(3)' in output
     assert adapter.fetched == []
@@ -587,3 +590,16 @@ def test_cli_update_fb2_mark_new_chapters(monkeypatch, capsys, tmp_path):
     datamaps = get_update_data(str(path))[8]
     assert datamaps[CH % 3]['mark_new'] is True
     assert datamaps[CH % 1]['mark_new'] is False
+
+
+def test_cli_update_fb2_zip_in_place(monkeypatch, capsys, tmp_path):
+    personal = PERSONAL + '[fb2]\nzip_output:true\n'
+    path = fresh_file(tmp_path, 'fb2', [1, 2], personal=personal, ext='fb2.zip')
+    assert path.read_bytes()[:2] == b'PK'
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(path),
+                                      {n: body_of(n) for n in (1, 2, 3)})
+    assert adapter.fetched == [CH % 3]
+    assert path.read_bytes()[:2] == b'PK'
+    assert detect_format(str(path)) == 'fb2'
+    assert get_update_data(str(path))[1] == 3
+    assert sorted(os.listdir(str(tmp_path))) == ['story.fb2.zip']

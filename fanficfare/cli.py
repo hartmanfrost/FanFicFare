@@ -381,8 +381,8 @@ def do_download(arg,
     output_filename = None
     # Format to write: -f, or when updating a story file without -f,
     # the format of that file.
-    writeformat = options.format
-    format_explicit = getattr(options, 'format_explicit', True)
+    writeformat = options.format or 'epub'
+    format_explicit = getattr(options, 'format_explicit', options.format is not None)
     # Existing story file read for update and its format.  It is also
     # the output file unless it's in another format than writeformat.
     update_file = None
@@ -697,7 +697,7 @@ def get_configuration(url,
     overwrite: always write output_filename, even if it's newer than
     the story (when converting an update to another format).
     '''
-    fileform = fileform or options.format
+    fileform = fileform or options.format or 'epub'
     try:
         configuration = Configuration(adapters.getConfigSectionsFor(url),
                                       fileform)
@@ -753,6 +753,11 @@ def get_configuration(url,
         configuration.set('overrides', 'always_overwrite', 'true')
 
     if options.update and output_filename and (chaptercount or overwrite):
+        if output_filename.lower().endswith('.zip'):
+            # updating a .fb2.zip: write it zipped again.
+            configuration.set('overrides', 'zip_output', 'true')
+            configuration.set('overrides', 'zip_filename', output_filename)
+            output_filename = os.path.basename(output_filename[:-4])
         configuration.set('overrides', 'output_filename', output_filename)
 
     if options.update and not options.updatecover:
