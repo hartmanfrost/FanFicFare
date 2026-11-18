@@ -106,7 +106,7 @@ titleLabels = {
     'version':'Downloader Version'
     }
 
-formatsections = ['html','txt','epub','mobi']
+formatsections = ['html','txt','epub','mobi','fb2']
 othersections = ['defaults','overrides']
 
 def get_valid_sections():
@@ -273,26 +273,33 @@ def get_valid_set_options():
                'logpage_at_end':(None,['epub'],boollist),
 
                'calibre_series_meta':(None,['epub'],boollist),
-               'force_update_epub_always':(None,['epub'],boollist),
+               'force_update_epub_always':(None,['epub','fb2'],boollist),
                'update_check_recent_chapters':(None,None,None),
-               'update_preserve_deleted_chapters':(None,['epub'],boollist),
+               'update_preserve_deleted_chapters':(None,['epub','fb2'],boollist),
                'page_progression_direction_rtl':(None,['epub'],boollist),
 
                'windows_eol':(None,['txt'],boollist),
 
-               'include_images':(None,['epub','html'],boollist+['coveronly']),
-               'keep_img_tags':(None,['epub','html'],boollist),
-               'jpg_quality':(None,['epub','html'],None),
-               'additional_images':(None,['epub','html'],None),
-               'grayscale_images':(None,['epub','html'],boollist),
-               'no_image_processing':(None,['epub','html'],boollist),
-               'dedup_img_files':(None,['epub','html'],boollist),
-               'convert_inline_images':(None,['epub','html'],boollist),
-               'retry_failedtoload_images':(None,['epub'],boollist),
-               'fix_relative_text_links':(None,['epub','html'],boollist),
-               'normalize_text_links':(None,['epub','html'],boollist),
-               'internalize_text_links':(None,['epub','html'],boollist),
-               'remove_class_chapter':(None,['epub','html'],boollist),
+               'include_images':(None,['epub','html','fb2'],boollist+['coveronly']),
+               'keep_img_tags':(None,['epub','html','fb2'],boollist),
+               'jpg_quality':(None,['epub','html','fb2'],None),
+               'additional_images':(None,['epub','html','fb2'],None),
+               'grayscale_images':(None,['epub','html','fb2'],boollist),
+               'no_image_processing':(None,['epub','html','fb2'],boollist),
+               'dedup_img_files':(None,['epub','html','fb2'],boollist),
+               'convert_inline_images':(None,['epub','html','fb2'],boollist),
+               'retry_failedtoload_images':(None,['epub','fb2'],boollist),
+               'fix_relative_text_links':(None,['epub','html','fb2'],boollist),
+               'normalize_text_links':(None,['epub','html','fb2'],boollist),
+               'internalize_text_links':(None,['epub','html','fb2'],boollist),
+               'remove_class_chapter':(None,['epub','html','fb2'],boollist),
+
+               'fb2_default_genre':(None,['fb2'],None),
+               'fb2_genre_map':(None,['fb2'],None),
+               'fb2_prewrap_classes':(None,['fb2'],None),
+               'fb2_hr_text':(None,['fb2'],None),
+               'fb2_src_lang':(None,['fb2'],None),
+               'fb2_tocpage_title':(None,['fb2'],None),
 
                'capitalize_forumtags':(base_xenforo_list,None,boollist),
                'minimum_threadmarks':(base_xenforo_list,None,None),
