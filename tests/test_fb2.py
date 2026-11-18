@@ -257,6 +257,37 @@ def test_html_to_fb2(html, expected):
     assert HtmlToFb2().convert(html) == expected
 
 
+@pytest.mark.parametrize('inner, expected', [
+    ## 3+ newlines are a blank line whether text or a block follows
+    (u'A</p>\n\n\nB', [u'<p>A</p>', u'<empty-line/>', u'<p>B</p>']),
+    (u'A</p>\n\n\n<p>B</p>', [u'<p>A</p>', u'<empty-line/>', u'<p>B</p>']),
+    (u'A\n\n\n<p>B</p>', [u'<p>A</p>', u'<empty-line/>', u'<p>B</p>']),
+    (u'<p>A\n\n\n</p><p>B</p>', [u'<p>A</p>', u'<empty-line/>', u'<p>B</p>']),
+    ## ficbook's scene markers: the same on both sides
+    (u'<p>A</p>\n\n\n<p style="text-align:center">***</p>\n\n\n<p>B</p>',
+     [u'<p>A</p>', u'<empty-line/>', u'<p>***</p>', u'<empty-line/>', u'<p>B</p>']),
+    (u'A\n\n\n<hr/>B', [u'<p>A</p>', u'<empty-line/>', u'<subtitle>* * *</subtitle>', u'<p>B</p>']),
+    (u'A\n\n\n<h3>T</h3>', [u'<p>A</p>', u'<empty-line/>', u'<subtitle>T</subtitle>']),
+    (u'A\n\n\n<ul><li>x</li></ul>', [u'<p>A</p>', u'<empty-line/>', u'<p>• x</p>']),
+    (u'A\n\n\n<blockquote>q</blockquote>\n\n\nB',
+     [u'<p>A</p>', u'<empty-line/>', u'<cite><p>q</p></cite>', u'<empty-line/>', u'<p>B</p>']),
+    ## one or two newlines only end the paragraph
+    (u'A</p>\n<p>B</p>', [u'<p>A</p>', u'<p>B</p>']),
+    (u'A</p>\n\n<p>B</p>', [u'<p>A</p>', u'<p>B</p>']),
+    ## nothing after them: dropped
+    (u'<p>A</p>\n\n\n', [u'<p>A</p>']),
+    (u'A\n\n\n', [u'<p>A</p>']),
+])
+def test_html_to_fb2_blank_lines_before_blocks(inner, expected):
+    assert HtmlToFb2().convert(u'<div class="part_text">%s</div>' % inner) == expected
+
+
+def test_html_to_fb2_br_before_block():
+    assert HtmlToFb2().convert(u'<p>A<br/><br/><br/></p><p>B</p>') == \
+        [u'<p>A</p>', u'<empty-line/>', u'<p>B</p>']
+    assert HtmlToFb2().convert(u'<p>A<br/><br/><br/></p>') == [u'<p>A</p>']
+
+
 def test_html_to_fb2_hr_text_and_images():
     assert HtmlToFb2(hr_text='').convert(u'<p>a</p><hr/><p>b</p>') == \
         [u'<p>a</p>', u'<empty-line/>', u'<p>b</p>']
@@ -295,7 +326,8 @@ def test_fb2_html_fixed_point(extra):
     for html in (RICH_CHAPTER,
                  u'<blockquote class="epigraph"><p>e</p><p class="text-author">A</p></blockquote><p>x</p>',
                  u'<div class="poem"><h4>Title</h4><p>a<br/>b</p><p class="text-author">P</p></div>',
-                 u'<p>a</p><p>&nbsp;</p><p>&nbsp;</p><p>b</p>'):
+                 u'<p>a</p><p>&nbsp;</p><p>&nbsp;</p><p>b</p>',
+                 u'<div class="part_text"><p>a</p>\n\n\n<p>***</p>\n\n\n\n<p>b</p>\n\n\n</div>'):
         b1, b2 = _fb2_roundtrip(adapter, html)
         assert b1 == b2
 

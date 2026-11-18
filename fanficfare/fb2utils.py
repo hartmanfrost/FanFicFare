@@ -163,7 +163,8 @@ class HtmlToFb2(object):
     linkmap: {chapter url: '#section_id'} for internalize_text_links.
 
     Line breaks: one or two <br> (or raw newlines in pre-wrap text)
-    start a new paragraph, three or more also add an <empty-line/>.
+    start a new paragraph, three or more also add an <empty-line/>,
+    whether text or a block element (<p>***</p>) comes after them.
     """
 
     def __init__(self, imgmap=None, allow_images=True,
@@ -206,8 +207,21 @@ class HtmlToFb2(object):
         self.cur = [o for _, o in self.stack]
 
     def _end_block(self):
-        self.pending_breaks = 0
+        """End the open paragraph at a block element boundary.
+
+        Three or more line breaks pending here (a blank line, such as
+        the newlines before ficbook's <p>***</p> scene markers) stay
+        pending, so whatever comes next, text or a block element, gets
+        the same <empty-line/> before it.  Breaks still pending at the
+        end of the text are dropped."""
+        if self.line_mode or self.pending_breaks < 3:
+            self.pending_breaks = 0
         self.flush()
+
+    def _start_block(self):
+        "Before a block element: end the open paragraph, then add the pending blank line."
+        self._end_block()
+        self._apply_breaks()
 
     def _apply_breaks(self):
         if self.pending_breaks:
@@ -221,7 +235,7 @@ class HtmlToFb2(object):
                 self.blocks.append(u'<empty-line/>')
 
     def _empty_line(self):
-        self._end_block()
+        self._start_block()
         if self.line_mode:
             self.blocks.append(_STANZA_BREAK)
         else:
@@ -286,7 +300,7 @@ class HtmlToFb2(object):
         elif name == 'br':
             self.pending_breaks += 1
         elif name == 'hr':
-            self._end_block()
+            self._start_block()
             if self.line_mode:
                 self.blocks.append(_STANZA_BREAK)
             elif self.hr_text:
@@ -342,7 +356,7 @@ class HtmlToFb2(object):
         elif name in BLOCKS or name in HEADINGS or \
                 classes & (STANZA_CLASSES | POEM_CLASSES | SUBTITLE_CLASSES |
                            TEXT_AUTHOR_CLASSES):
-            self._end_block()
+            self._start_block()
             if name == 'li':
                 self.cur.append(u'• ')
             self.walk(child, pw)
@@ -356,7 +370,7 @@ class HtmlToFb2(object):
         return u'\xa0' in text and not text.strip() and not tag.find('img')
 
     def _paragraph_as(self, child, pw, ptag):
-        self._end_block()
+        self._start_block()
         self.ptag.append(ptag)
         self.walk(child, pw)
         self._end_block()
@@ -364,7 +378,7 @@ class HtmlToFb2(object):
 
     def _container(self, child, pw, kind):
         "<cite> or <epigraph>.  Nested ones are flattened."
-        self._end_block()
+        self._start_block()
         if self.in_cite or self.line_mode:
             self.walk(child, pw)
             self._end_block()
@@ -395,7 +409,7 @@ class HtmlToFb2(object):
         return sub.blocks
 
     def _poem(self, child, pw):
-        self._end_block()
+        self._start_block()
         title = []
         parts = []          # (kind, xml) kind: stanza/subtitle
         authors = []
@@ -460,6 +474,7 @@ class HtmlToFb2(object):
         root = soup.find('body') or soup
         self.walk(root)
         self._end_block()
+        self.pending_breaks = 0
         return [b for b in self.blocks if b != _STANZA_BREAK]
 
 
