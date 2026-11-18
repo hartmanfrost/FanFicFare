@@ -43,8 +43,11 @@ logger = logging.getLogger('fanficfare')
 from fanficfare import adapters, writers, exceptions
 from fanficfare.configurable import Configuration
 from fanficfare.fetchers.camoufoxbrowser import cli_browser_session
-from fanficfare.epubutils import (
-    get_dcsource_chaptercount, get_update_data, unnew_chapters_epub)
+from fanficfare.epubutils import unnew_chapters_epub
+from fanficfare.updatedata import (
+    get_dcsource_chaptercount, get_update_data, detect_format,
+    converted_filename, UPDATE_FORMATS)
+from fanficfare.fb2utils import get_story_url_from_fb2_html
 from fanficfare.geturls import GetURLs
 from fanficfare.updategate import decide_update
 import configparser
@@ -68,8 +71,8 @@ def mkParser(calibre, parser=None):
     # read in args, anything starting with -- will be treated as --<varible>=<value>
     if not parser:
         parser = OptionParser('usage: %prog [options] [STORYURL]...')
-    parser.add_option('-f', '--format', dest='format', default='epub',
-                      help='Write story as FORMAT, epub(default), mobi, txt or html.', metavar='FORMAT')
+    parser.add_option('-f', '--format', dest='format', default=None,
+                      help='Write story as FORMAT, epub(default), fb2, mobi, txt or html.  With -u/-U and a story file, the default is the format of that file; give -f to write the update in another format (epub or fb2) to a file of the same name with the new extension, eg: -u story.epub -f fb2', metavar='FORMAT')
     if calibre:
         config_help = 'calibre plugin defaults.ini, calibre plugin personal.ini'
     else:
@@ -105,13 +108,13 @@ def mkParser(calibre, parser=None):
                       help='Do not download chapters and do not write output file.  Intended for testing and with --meta-only.', )
     parser.add_option('-u', '--update-epub',
                       action='store_true', dest='update',
-                      help='Update an existing epub(if present) with new chapters.  Give either epub filename or story URL.', )
+                      help='Update an existing epub or fb2 (if present) with new chapters.  Give either epub/fb2 filename or story URL.', )
     parser.add_option('-U', '--update-epub-always',
                       action='store_true', dest='updatealways',
-                      help="Update an existing epub(if present) even if there aren't new chapters.  Give either epub filename or story URL.", )
+                      help="Update an existing epub or fb2 (if present) even if there aren't new chapters.  Give either epub/fb2 filename or story URL.", )
     parser.add_option('--update-cover',
                       action='store_true', dest='updatecover',
-                      help='Update cover in an existing epub, otherwise existing cover (if any) is used on update.  Only valid with --update-epub.', )
+                      help='Update cover in an existing epub or fb2, otherwise existing cover (if any) is used on update.  Only valid with --update-epub.', )
     parser.add_option('--unnew',
                       action='store_true', dest='unnew',
                       help='Remove (new) chapter marks left by mark_new_chapters setting.', )
@@ -203,6 +206,12 @@ def expandOptions(options):
     if options.updatealways:
         options.update = True
 
+    # -f not given: epub, except that updating a story file keeps
+    # that file's format (see do_download).
+    options.format_explicit = options.format is not None
+    if not options.format:
+        options.format = 'epub'
+
 def validateOptions(parser, options, args):
     if options.unverified_ssl:
         parser.error("Option --unverified_ssl removed.\nSet use_ssl_unverified_context:true in ini file or --option instead.")
@@ -211,8 +220,8 @@ def validateOptions(parser, options, args):
                                            options.downloadlist))):
         parser.error('Incorrect arguments: Cannot download and list URLs at the same time.')
 
-    if options.update and options.format != 'epub':
-        parser.error('-u/--update-epub/-U/--update-epub-always only work with epub')
+    if options.update and options.format not in UPDATE_FORMATS:
+        parser.error('-u/--update-epub/-U/--update-epub-always only work with %s' % ' or '.join(UPDATE_FORMATS))
 
     if options.unnew and options.format != 'epub':
         parser.error('--unnew only works with epub')
@@ -367,23 +376,53 @@ def do_download(arg,
                 warn=print,
                 fail=print):
 
-    # Attempt to update an existing epub.
+    # Attempt to update an existing epub or fb2.
     chaptercount = None
     output_filename = None
+    # Format to write: -f, or when updating a story file without -f,
+    # the format of that file.
+    writeformat = options.format
+    format_explicit = getattr(options, 'format_explicit', True)
+    # Existing story file read for update and its format.  It is also
+    # the output file unless it's in another format than writeformat.
+    update_file = None
+    update_format = None
+    # The existing file has no chapters FanFicFare can reuse (FB2 made
+    # by another program): download all of them again.
+    full_redownload = False
 
     if options.unnew:
+        if os.path.isfile(arg) and detect_format(arg) == 'fb2':
+            fail('--unnew only works with epub')
+            return
         # remove mark_new_chapters marks
         unnew_chapters_epub(arg,arg)
         return
 
     if options.update:
         try:
+            update_format = detect_format(arg) or 'epub'
             url, chaptercount = get_dcsource_chaptercount(arg)
+            if update_format == 'fb2':
+                if not url:
+                    url = get_story_url_from_fb2_html(arg, _is_story_url)
+                    if url:
+                        url = adapters.getNormalStoryURL(url) or url
+                full_redownload = bool(url) and not chaptercount
             if not url:
-                fail('No story URL found in epub to update.')
+                fail('No story URL found in %s to update.' % update_format)
                 return
+            update_file = arg
+            if not format_explicit:
+                writeformat = update_format
+            if writeformat == update_format:
+                output_filename = arg
+            else:
+                output_filename = converted_filename(arg, writeformat)
+                print('Converting %s to %s: %s' % (arg, writeformat, output_filename))
             print('Updating %s, URL: %s' % (arg, url))
-            output_filename = arg
+            if full_redownload:
+                print('%s has no FanFicFare chapter data, all chapters will be downloaded again.' % arg)
         except Exception as e:
             # if there's an error reading the update file:
             if os.path.isfile(arg):
@@ -401,7 +440,13 @@ def do_download(arg,
                                       passed_personalini,
                                       options,
                                       chaptercount,
-                                      output_filename)
+                                      output_filename,
+                                      fileform=writeformat,
+                                      # writing a new file or replacing
+                                      # an FB2 from another program.
+                                      overwrite=full_redownload or \
+                                          (update_file is not None and
+                                           output_filename != update_file))
 
     try:
         # Allow chapter range with URL.
@@ -418,16 +463,32 @@ def do_download(arg,
             adapter.setChaptersRange(options.begin, options.end)
 
         # check for updating from URL (vs from file)
-        update_story = options.update
+        update_story = options.update and not full_redownload
         if update_story and not chaptercount:
             try:
-                writer = writers.getWriter('epub', configuration, adapter)
+                writer = writers.getWriter(writeformat, configuration, adapter)
                 output_filename = writer.getOutputFileName()
-                noturl, chaptercount = get_dcsource_chaptercount(output_filename)
-                print('Updating %s, URL: %s' % (output_filename, url))
+                update_file = output_filename
+                if not os.path.exists(update_file):
+                    # No file in the format being written, use one of
+                    # the same name in another format if there is one.
+                    for fmt in UPDATE_FORMATS:
+                        other = converted_filename(output_filename, fmt)
+                        if fmt != writeformat and os.path.isfile(other):
+                            print('Converting %s to %s: %s' % (other, writeformat, output_filename))
+                            update_file = other
+                            break
+                noturl, chaptercount = get_dcsource_chaptercount(update_file)
+                update_format = detect_format(update_file) or 'epub'
+                print('Updating %s, URL: %s' % (update_file, url))
             except Exception as e:
-                warn("Failed to read epub for update: (%s) Continuing with update=false"%e)
+                warn("Failed to read %s for update: (%s) Continuing with update=false"%(writeformat,e))
                 update_story = False
+
+        # Updating from a file in another format (or file name) always
+        # writes, even without new chapters.
+        converting = bool(update_story and update_file and
+                          update_file != output_filename)
 
         # Check for include_images without no_image_processing. In absence of PIL, give warning.
         if adapter.getConfig('include_images') and not adapter.getConfig('no_image_processing'):
@@ -493,17 +554,17 @@ def do_download(arg,
 
             update_decision = decide_update(chaptercount, urlchaptercount,
                                metaonly=options.metaonly,
-                               updatealways=options.updatealways,
+                               updatealways=options.updatealways or converting,
                                needs_edit_check=needs_edit_check,
                                preserve_deleted=preserve_deleted,
                                force_update_epub_always=options.updatealways and adapter.getConfig('force_update_epub_always'))
 
             if update_decision == 'already_contains':
-                print('%s already contains %d chapters.' % (output_filename, chaptercount))
+                print('%s already contains %d chapters.' % (update_file, chaptercount))
             elif update_decision == 'more_than_source':
-                warn('%s contains %d chapters, more than source: %d.' % (output_filename, chaptercount, urlchaptercount))
+                warn('%s contains %d chapters, more than source: %d.' % (update_file, chaptercount, urlchaptercount))
             elif update_decision == 'no_chapters':
-                warn("%s doesn't contain any recognizable chapters, probably from a different source.  Not updating." % output_filename)
+                warn("%s doesn't contain any recognizable chapters, probably from a different source.  Not updating." % update_file)
             else:
                 # update now handled by pre-populating the old
                 # images and chapters in the adapter rather than
@@ -516,7 +577,7 @@ def do_download(arg,
                  adapter.calibrebookmark,
                  adapter.logfile,
                  adapter.oldchaptersmap,
-                 adapter.oldchaptersdata) = (get_update_data(output_filename))[0:9]
+                 adapter.oldchaptersdata) = (get_update_data(update_file))[0:9]
 
                 if preserve_deleted and adapter.oldchaptersmap:
                     site_urls = set(ch['url'] for ch in adapter.get_chapters())
@@ -531,17 +592,17 @@ def do_download(arg,
                 # story is loaded.
                 adapter.getStory()
 
-                if not options.updatealways and \
+                if not options.updatealways and not converting and \
                         adapter.story.chapter_updated_count == 0 and \
                         adapter.story.chapter_added_count == 0 and \
                         adapter.story.chapter_error_count == 0 and \
                         adapter.story.chapter_written_count == chaptercount:
                     if chaptercount == urlchaptercount:
-                        print('%s already contains %d chapters.' % (output_filename, chaptercount))
+                        print('%s already contains %d chapters.' % (update_file, chaptercount))
                     else:
-                        print('%s already contains %d chapters, site only has %d.' % (output_filename, chaptercount, urlchaptercount))
+                        print('%s already contains %d chapters, site only has %d.' % (update_file, chaptercount, urlchaptercount))
                 else:
-                    print('Do update - epub(%d) vs url(%d)' % (chaptercount, urlchaptercount))
+                    print('Do update - %s(%d) vs url(%d)' % (update_format, chaptercount, urlchaptercount))
 
                     if not update_story and chaptercount == urlchaptercount and adapter.getConfig('do_update_hook'):
                         adapter.hookForUpdates(chaptercount)
@@ -552,7 +613,7 @@ def do_download(arg,
                         metadata = adapter.story.getAllMetadata()
                     call(string.Template(adapter.getConfig('pre_process_cmd')).substitute(metadata), shell=True)
 
-                    output_filename = write_story(configuration, adapter, 'epub',
+                    output_filename = write_story(configuration, adapter, writeformat,
                                                   nooutput=options.nooutput)
 
         else:
@@ -563,7 +624,7 @@ def do_download(arg,
                     metadata = adapter.story.getAllMetadata()
                 call(string.Template(adapter.getConfig('pre_process_cmd')).substitute(metadata), shell=True)
 
-            output_filename = write_story(configuration, adapter, options.format,
+            output_filename = write_story(configuration, adapter, writeformat,
                                           metaonly=options.metaonly, nooutput=options.nooutput)
 
             if options.metaonly and not options.jsonmeta:
@@ -620,20 +681,31 @@ def do_download(arg,
     except exceptions.AccessDenied as ad:
         fail(ad)
 
+def _is_story_url(url):
+    return adapters.getNormalStoryURL(url) is not None
+
 def get_configuration(url,
                       passed_defaultsini=None,
                       passed_personalini=None,
                       options={},
                       chaptercount=None,
-                      output_filename=None):
+                      output_filename=None,
+                      fileform=None,
+                      overwrite=False):
+    '''
+    fileform: output format, options.format if not given.
+    overwrite: always write output_filename, even if it's newer than
+    the story (when converting an update to another format).
+    '''
+    fileform = fileform or options.format
     try:
         configuration = Configuration(adapters.getConfigSectionsFor(url),
-                                      options.format)
+                                      fileform)
     except exceptions.UnknownSite as e:
         if options.list or options.normalize or options.downloadlist:
             # list for page doesn't have to be a supported site.
             configuration = Configuration(['unknown'],
-                                          options.format)
+                                          fileform)
         else:
             raise
 
@@ -677,18 +749,18 @@ def get_configuration(url,
         # generally already exists in defaults.ini
         pass
 
-    if options.force:
+    if options.force or overwrite:
         configuration.set('overrides', 'always_overwrite', 'true')
 
-    if options.update and chaptercount and output_filename:
+    if options.update and output_filename and (chaptercount or overwrite):
         configuration.set('overrides', 'output_filename', output_filename)
 
     if options.update and not options.updatecover:
         configuration.set('overrides', 'never_make_cover', 'true')
 
-    # images only for epub, even if the user mistakenly turned it
-    # on else where.
-    if options.format not in ('epub', 'html'):
+    # images only for epub, html and fb2, even if the user mistakenly
+    # turned it on else where.
+    if fileform not in ('epub', 'html', 'fb2'):
         configuration.set('overrides', 'include_images', 'false')
 
     if options.options:
