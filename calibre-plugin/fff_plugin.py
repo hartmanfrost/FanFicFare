@@ -130,6 +130,16 @@ class FanFicFarePlugin(InterfaceAction):
 
     name = 'FanFicFare'
 
+    ## FanFicFare FB2 fork: calibre builds the keys under which it
+    ## saves keyboard shortcuts (shortcuts/main.json) from the base
+    ## plugin's name, 'Interface Action: <base name> (<action name>)',
+    ## also for menu actions.  The base plugin is renamed 'FanFicFare
+    ## FB2' (__init__.py), so keep upstream's key and the shortcuts a
+    ## user set up for upstream FanFicFare.
+    @property
+    def unique_name(self):
+        return 'Interface Action: FanFicFare (%s)' % self.name
+
     # Declare the main action associated with this plugin
     # The keyboard shortcut can be None if you dont want to use a keyboard
     # shortcut. Remember that currently calibre has no central management for
