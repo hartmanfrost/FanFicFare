@@ -658,6 +658,28 @@ def test_cli_update_foreign_fb2_downloads_everything(monkeypatch, capsys, tmp_pa
     assert data[0] == STORY_URL and data[1] == 2
 
 
+def test_cli_update_foreign_fb2_keeps_its_cover(monkeypatch, capsys, tmp_path):
+    """-u sets never_make_cover, so the cover of the FB2 being replaced
+    is the only one there is: keep it, by file and by URL."""
+    path = tmp_path / 'story.fb2'
+    path.write_bytes(foreign_fb2_bytes(cover=True))
+    assert fb2utils.get_cover_img(str(path)) == ('image/png', PNG)
+    adapter, output, warned = run_cli(monkeypatch, capsys, str(path),
+                                      {n: body_of(n) for n in (1, 2)})
+    assert adapter.fetched == [CH % 1, CH % 2]
+    assert fb2utils.get_cover_img(str(path)) == ('image/png', PNG)
+
+    monkeypatch.chdir(tmp_path)
+    path.write_bytes(foreign_fb2_bytes(cover=True))
+    adapter, output, warned = run_cli(monkeypatch, capsys, STORY_URL,
+                                      {n: body_of(n) for n in (1, 2)},
+                                      personal=PERSONAL + 'output_filename: story${formatext}\n',
+                                      format='fb2', format_explicit=True)
+    assert adapter.fetched == [CH % 1, CH % 2]
+    assert get_update_data('story.fb2')[1] == 2
+    assert fb2utils.get_cover_img('story.fb2') == ('image/png', PNG)
+
+
 def test_cli_update_by_url_foreign_fb2_downloads_everything(monkeypatch, capsys, tmp_path):
     "-u URL with only an FB2 from another program: as -u that file."
     monkeypatch.chdir(tmp_path)

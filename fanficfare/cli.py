@@ -509,6 +509,11 @@ def do_download(arg,
                 warn("Failed to read %s for update: (%s) Continuing with update=false"%(writeformat,e))
                 update_story = False
 
+        if full_redownload:
+            # never_make_cover is set for -u: keep the cover of the
+            # file being replaced.
+            adapter.oldcover = old_cover(update_file)
+
         # Updating from a file in another format (or file name) always
         # writes, even without new chapters.
         converting = bool(update_story and update_file and
@@ -736,6 +741,14 @@ def find_update_file(output_filename, writeformat):
     if fmt is None:
         return None, None
     return path_for(fmt), count
+
+def old_cover(path):
+    "The cover of an existing story file, as adapter.oldcover wants it, or None."
+    try:
+        return get_update_data(path)[4]
+    except Exception as e:
+        logger.warning("Can't read the cover of %s: %s" % (path, e))
+        return None
 
 def set_override(configuration, key, value):
     "Set key in [overrides] of a configuration that may have been used already."
