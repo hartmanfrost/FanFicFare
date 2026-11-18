@@ -607,7 +607,7 @@ class AddNewDialog(HotKeyedSizePersistedDialog, INISnippetDialog):
                 } )
 
         if self.merge:
-            retval['fileform']=='epub'
+            retval['fileform']='epub'
             if self.newmerge:
                 retval['updatemeta']=True
                 retval['collision']=ADDNEW
