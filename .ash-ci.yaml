@@ -7,6 +7,9 @@
 # `paths` lists only what goes into the image: every build gets a new digest, and
 # each new digest restarts the calibre pod (Image Updater follows :latest by digest),
 # so pushes that touch only docs, tests or scripts build nothing.
+# First image: push fb2 (skipped: not the default branch yet), make fb2 the default
+# branch and install the argoash App (no push event, nothing built), then push a
+# commit that changes one of `paths`, for example this comment.
 images:
   - image: ghcr.io/hartmanfrost/fanficfare-calibre-plugin
     context: .

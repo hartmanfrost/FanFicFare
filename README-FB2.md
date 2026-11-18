@@ -205,13 +205,22 @@ digest; each new digest restarts the calibre pod. That is why `paths`
 lists only what goes into the image.
 
 There is no GitHub Actions workflow; the CI starts from the App's
-webhook. It needs:
+webhook, and app-ci builds only pushes to the default branch that change
+a file under `paths`. So the first `:latest` needs this order:
 
-- the repository's **default branch set to `fb2`** on GitHub
-  (`gh repo edit hartmanfrost/FanFicFare --default-branch fb2`); app-ci
-  builds pushes to the default branch only;
-- the `argoash` App installed on the repository
-  (github.com/settings/installations > argoash > Repository access).
+1. Push `fb2`. app-ci skips that push: `fb2` isn't the default branch
+   yet, and GitHub can't make it one before it exists.
+2. Set the repository's **default branch to `fb2`**
+   (`gh repo edit hartmanfrost/FanFicFare --default-branch fb2`) and
+   install the `argoash` App on the repository
+   (github.com/settings/installations > argoash > Repository access).
+   Neither sends a push, so nothing is built yet.
+3. Push a commit to `fb2` that changes a file under `paths`, for example
+   a comment in `.ash-ci.yaml`. An empty commit, or one that touches only
+   docs, builds nothing.
+
+Until then there is no `:latest` digest for the calibre initContainer to
+pin, and Image Updater has nothing to follow.
 
 ## Keeping up with upstream
 
