@@ -36,6 +36,19 @@ def getClass():
 
 logger = logging.getLogger(__name__)
 
+
+def fandom_canon(name):
+    '''The canon a ficbook fandom name stands for, for telling a
+    crossover from one story filed under several media.  Book fandoms
+    are named "Author «Title» (subtitle)" and their films and games
+    just "Title": Роулинг Джоан «Гарри Поттер» and Гарри Поттер are
+    one canon.'''
+    title = re.search(u'«(.+)»', name)
+    if title:
+        name = title.group(1)
+    return u' '.join(name.split()).lower().replace(u'ё', u'е')
+
+
 class FicBookNetAdapter(BaseSiteAdapter):
 
     def __init__(self, config, url):
@@ -196,7 +209,13 @@ class FicBookNetAdapter(BaseSiteAdapter):
             fandoms = dlinfo.find_all('a', href=re.compile(r'/fandom_universe/'))
         for fandom in fandoms:
             self.story.addToList('category',stripHTML(fandom))
-        if len(fandoms) > 1:
+        ## ficbook writes "(кроссовер)" after any fandom list longer
+        ## than one, so a work filed under both the Harry Potter books
+        ## (Роулинг Джоан «Гарри Поттер») and the films (Гарри Поттер)
+        ## reads as a crossover.  Only call it one when the fandoms
+        ## name more than one canon.  An author's own "Кроссовер" tag
+        ## (/tags/10) is kept by the tags loop below either way.
+        if len(set(fandom_canon(stripHTML(fandom)) for fandom in fandoms)) > 1:
             self.story.addToList('genre', u'Кроссовер')
 
         tags = soup.find('div',{'class':'tags'})

@@ -4,7 +4,9 @@ The fixtures in tests/fixtures_ficbooknet/ are trimmed copies (just the
 section.chapter-info story hat and parts list) of real pages fetched
 2026-11-18, both old numeric story ids and new UUID style ids:
 
-  3405280      numeric, completed, two /fanfiction/ fandoms (crossover)
+  3405280      numeric, completed, Harry Potter books and films: two
+               /fanfiction/ fandoms that ficbook labels "(кроссовер)",
+               but one canon
   9139455      numeric, completed, has a cover
   11757889     numeric, frozen, direction Смешанная
   019ef3f4-... UUID, in progress, "Вселенная:" only (no "Фэндом:")
@@ -12,6 +14,13 @@ section.chapter-info story hat and parts list) of real pages fetched
   0191af22-... UUID, "Вселенная:" and "Фэндом:" both present
   018a176a-... UUID, series and nine fandoms
   01a1e596-... UUID, frozen one-shot (no parts list), direction Джен
+
+and, only for the crossover tests:
+
+  10504608     numeric, Naruto and the Harry Potter books, no
+               "Кроссовер" tag of the author's
+  019c00bf-... UUID, "Вселенная:" Голодные игры and "Фэндом:" Boku no
+               Hero Academia, the author tagged it "Кроссовер"
 """
 import os
 from unittest.mock import patch
@@ -19,7 +28,7 @@ from unittest.mock import patch
 import pytest
 
 import fanficfare
-from fanficfare.adapters.adapter_ficbooknet import FicBookNetAdapter
+from fanficfare.adapters.adapter_ficbooknet import FicBookNetAdapter, fandom_canon
 from fanficfare.configurable import Configuration
 
 FIXTURE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'fixtures_ficbooknet')
@@ -33,6 +42,8 @@ BACK = '019afb02-093f-747e-b5ed-175c13970b6b'
 ROSES = '0191af22-76e7-7bed-9982-62c0d971f1c5'
 JOURNEY = '018a176a-d430-7019-bc67-ccfe6a09d40e'
 ONESHOT = '01a1e596-0c02-7eb2-9bf1-6f8925d6ceba'
+NARUTO = '10504608'
+TAGGED = '019c00bf-9493-72f9-87ab-0e579157673f'
 
 EXPECTED = {
     '3405280': dict(
@@ -191,9 +202,45 @@ def test_fandom_wins_over_universe_when_both_listed(adapters):
 
 
 def test_crossover_genre(adapters):
-    assert 'Кроссовер' in adapters['3405280'].story.getMetadataRaw('genre')
     assert 'Кроссовер' in adapters[JOURNEY].story.getMetadataRaw('genre')
     assert 'Кроссовер' not in adapters['9139455'].story.getMetadataRaw('genre')
+
+
+def test_books_and_films_of_one_canon_are_not_a_crossover(adapters):
+    story = adapters['3405280'].story
+    assert story.getMetadataRaw('category') == [ROULING, 'Гарри Поттер']
+    assert 'Кроссовер' not in story.getMetadataRaw('genre')
+
+
+def test_two_canons_are_a_crossover_without_the_authors_tag():
+    story = make_adapter(NARUTO).story
+    assert story.getMetadataRaw('category') == ['Naruto', ROULING]
+    assert story.getMetadataRaw('genre').count('Кроссовер') == 1
+
+
+def test_the_authors_crossover_tag_is_kept():
+    story = make_adapter(TAGGED).story
+    assert story.getMetadataRaw('category') == ['Boku no Hero Academia']
+    assert story.getMetadataRaw('genre').count('Кроссовер') == 1
+
+
+@pytest.mark.parametrize('one,other', [
+    (ROULING, 'Гарри Поттер'),
+    ('Толкин Джон Р. Р. «Властелин колец»', 'Властелин Колец'),
+    ('Сапковский Анджей «Ведьмак» (Сага о ведьмаке)', 'Ведьмак'),
+    ('Чёрный клевер', 'Черный  клевер'),
+])
+def test_fandom_canon_same(one, other):
+    assert fandom_canon(one) == fandom_canon(other)
+
+
+@pytest.mark.parametrize('one,other', [
+    ('Сапковский Анджей «Ведьмак» (Сага о ведьмаке)', 'The Witcher'),
+    ('Лавкрафт Говард «Ужас Данвича»', 'Лавкрафт Говард Филлипс «Мифы Ктулху»'),
+    (ROULING, 'Naruto'),
+])
+def test_fandom_canon_different(one, other):
+    assert fandom_canon(one) != fandom_canon(other)
 
 
 @pytest.mark.parametrize('story_id,status', [
