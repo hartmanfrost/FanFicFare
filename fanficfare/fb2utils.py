@@ -41,6 +41,7 @@ import re
 import warnings
 import zipfile
 from io import BytesIO
+from urllib.parse import unquote
 from xml.etree import ElementTree
 
 import bs4
@@ -920,12 +921,21 @@ def get_dcsource_chaptercount(inputio):
 def get_story_url_from_fb2_html(inputio, _is_good_url=None):
     """First link in the FB2 accepted by _is_good_url.  For FB2 files
     from other programs (calibre's conversion of an FFF EPUB keeps the
-    title page links), which have no src-url."""
+    title page links), which have no src-url.
+
+    calibre percent-encodes '=' in link targets ('?sid%3d3001'), so a
+    link that isn't accepted as it is is tried once more unquoted, and
+    returned unquoted if that one is accepted."""
     root = parse_fb2(inputio)
     for el in root.iter('a'):
         href = _href(el)
-        if href and href.startswith('http') and (_is_good_url is None or _is_good_url(href)):
+        if not href or not href.startswith('http'):
+            continue
+        if _is_good_url is None or _is_good_url(href):
             return href
+        unquoted = unquote(href)
+        if unquoted != href and _is_good_url(unquoted):
+            return unquoted
     return None
 
 def get_cover_img(inputio):

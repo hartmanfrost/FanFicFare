@@ -423,6 +423,30 @@ def test_read_zip_and_entities_and_cp1251(tmp_path):
     assert root.find('description/title-info/book-title').text == u'Книга\xa0—'
 
 
+def test_story_url_from_calibre_converted_fb2_links():
+    """calibre writes '=' in link targets as %3d: such a link is still
+    found (with the real URL check, not a monkeypatched one)."""
+    def fb2(href):
+        return io.BytesIO((
+            u'<?xml version="1.0" encoding="UTF-8"?>\n'
+            u'<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" '
+            u'xmlns:l="http://www.w3.org/1999/xlink"><description><title-info>'
+            u'<book-title>T</book-title></title-info></description>'
+            u'<body><section><p><a l:href="https://example.org/nope">x</a> '
+            u'<a l:href="%s">Story</a></p></section></body></FictionBook>' % href).encode('utf-8'))
+    find = fb2utils.get_story_url_from_fb2_html
+    assert find(fb2(u'http://test1.com?sid%3d3001'), cli._is_story_url) == \
+        u'http://test1.com?sid=3001'
+    assert find(fb2(u'http://test1.com?sid=3001'), cli._is_story_url) == \
+        u'http://test1.com?sid=3001'
+    ## accepted as it is: returned as it is, not unquoted
+    assert find(fb2(u'https://ficbook.net/readfic/1%2D2'), lambda u: True) == \
+        u'https://example.org/nope'
+    assert find(fb2(u'https://ficbook.net/readfic/1%2D2'),
+                lambda u: 'ficbook' in u) == u'https://ficbook.net/readfic/1%2D2'
+    assert find(fb2(u'http://test1.com?nothing%3d1'), cli._is_story_url) is None
+
+
 def test_converted_filename():
     assert converted_filename('a/b.epub', 'fb2') == 'a/b.fb2'
     assert converted_filename('a/b.fb2', 'epub') == 'a/b.epub'
